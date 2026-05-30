@@ -3,6 +3,8 @@ numpy
 pillow
 opencv-python-headless
 mediapipe>=0.10.30
+protobuf<5.0.0
 pandas
 openpyxl
 gdown
+
