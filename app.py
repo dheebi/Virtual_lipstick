@@ -487,7 +487,24 @@ def load_mediapipe():
         import traceback
         st.error("### 🔍 MediaPipe Diagnostic Report")
         st.write(f"**Python Version**: {sys.version}")
-        st.write(f"**MediaPipe Version**: {getattr(mp, '__version__', 'Not Loaded')}")
+        
+        mp_loaded = "Not Loaded"
+        mp_path = "N/A"
+        mp_contents = []
+        try:
+            import mediapipe as mp
+            mp_loaded = getattr(mp, "__version__", "unknown")
+            mp_path = getattr(mp, "__file__", "unknown")
+            if mp_path and mp_path != "unknown":
+                mp_dir = os.path.dirname(mp_path)
+                mp_contents = os.listdir(mp_dir)
+        except Exception as mpe:
+            mp_loaded = f"Error: {mpe}"
+            
+        st.write(f"**MediaPipe Version**: {mp_loaded}")
+        st.write(f"**MediaPipe Path**: {mp_path}")
+        st.write(f"**MediaPipe Dir Contents**: {mp_contents}")
+        
         try:
             import google.protobuf as pb
             st.write(f"**Protobuf Version**: {pb.__version__}")
