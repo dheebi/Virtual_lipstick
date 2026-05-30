@@ -474,12 +474,38 @@ components.html("""
 # =========================
 @st.cache_resource
 def load_mediapipe():
-    return mp.solutions.face_mesh.FaceMesh(
-        static_image_mode=True,
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.4,
-    )
+    import sys
+    try:
+        import mediapipe.python.solutions as solutions
+        return solutions.face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.4,
+        )
+    except Exception as e:
+        import traceback
+        st.error("### 🔍 MediaPipe Diagnostic Report")
+        st.write(f"**Python Version**: {sys.version}")
+        st.write(f"**MediaPipe Version**: {getattr(mp, '__version__', 'Not Loaded')}")
+        try:
+            import google.protobuf as pb
+            st.write(f"**Protobuf Version**: {pb.__version__}")
+        except Exception as pbe:
+            st.write(f"**Protobuf Error**: {pbe}")
+        
+        st.write("**Detailed Import Traceback**:")
+        st.code(traceback.format_exc())
+        
+        # Try to import the native bindings to see the root C/C++ loader error
+        try:
+            from mediapipe.python import _framework_bindings
+            st.success("Native C++ bindings loaded successfully!")
+        except Exception as nbe:
+            st.write("**Native C++ Binding Error**:")
+            st.code(traceback.format_exc())
+            
+        st.stop()
 
 face_mesh = load_mediapipe()
 
