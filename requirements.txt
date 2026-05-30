@@ -1,10 +1,10 @@
-streamlit>=1.35.0
-numpy
-pillow
-opencv-python-headless
-mediapipe>=0.10.30
-protobuf<5.0.0
-pandas
-openpyxl
+streamlit==1.55.0
+numpy==1.26.4
+pillow==10.3.0
+opencv-python-headless==4.11.0.86
+mediapipe==0.10.20
+protobuf==4.25.9
+pandas==2.2.3
+openpyxl==3.1.5
 gdown
 
