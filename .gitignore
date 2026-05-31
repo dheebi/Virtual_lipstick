@@ -1,10 +1,12 @@
-model/
+model/*
 *.h5
 *.keras
 *.task
+!model/face_landmarker.task
 
 # Environments
 venv/
+venv_old/
 cleanenv/
 .venv/
 env/

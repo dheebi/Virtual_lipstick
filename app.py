@@ -483,46 +483,75 @@ def load_mediapipe():
             refine_landmarks=True,
             min_detection_confidence=0.4,
         )
-    except Exception as e:
-        import traceback
-        st.error("### 🔍 MediaPipe Diagnostic Report")
-        st.write(f"**Python Version**: {sys.version}")
-        
-        mp_loaded = "Not Loaded"
-        mp_path = "N/A"
-        mp_contents = []
+    except Exception as e1:
         try:
-            import mediapipe as mp
-            mp_loaded = getattr(mp, "__version__", "unknown")
-            mp_path = getattr(mp, "__file__", "unknown")
-            if mp_path and mp_path != "unknown":
-                mp_dir = os.path.dirname(mp_path)
-                mp_contents = os.listdir(mp_dir)
-        except Exception as mpe:
-            mp_loaded = f"Error: {mpe}"
+            class FaceMeshWrapper:
+                def __init__(self, model_path='model/face_landmarker.task'):
+                    from mediapipe.tasks import python
+                    from mediapipe.tasks.python import vision
+                    
+                    base_options = python.BaseOptions(model_asset_path=model_path)
+                    options = vision.FaceLandmarkerOptions(
+                        base_options=base_options,
+                        output_face_blendshapes=False,
+                        output_facial_transformation_matrixes=False,
+                        num_faces=1
+                    )
+                    self.detector = vision.FaceLandmarker.create_from_options(options)
+
+                def process(self, rgb_image):
+                    import mediapipe as mp
+                    # Wrap raw numpy rgb image in mp.Image
+                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+                    detection_result = self.detector.detect(mp_image)
+                    
+                    class LegacyFaceLandmarks:
+                        def __init__(self, landmark_list):
+                            self.landmark = landmark_list
+                            
+                    class LegacyResult:
+                        def __init__(self, face_landmarks):
+                            if face_landmarks:
+                                self.multi_face_landmarks = [LegacyFaceLandmarks(face_landmarks[0])]
+                            else:
+                                self.multi_face_landmarks = None
+                                
+                    return LegacyResult(detection_result.face_landmarks)
             
-        st.write(f"**MediaPipe Version**: {mp_loaded}")
-        st.write(f"**MediaPipe Path**: {mp_path}")
-        st.write(f"**MediaPipe Dir Contents**: {mp_contents}")
-        
-        try:
-            import google.protobuf as pb
-            st.write(f"**Protobuf Version**: {pb.__version__}")
-        except Exception as pbe:
-            st.write(f"**Protobuf Error**: {pbe}")
-        
-        st.write("**Detailed Import Traceback**:")
-        st.code(traceback.format_exc())
-        
-        # Try to import the native bindings to see the root C/C++ loader error
-        try:
-            from mediapipe.python import _framework_bindings
-            st.success("Native C++ bindings loaded successfully!")
-        except Exception as nbe:
-            st.write("**Native C++ Binding Error**:")
+            return FaceMeshWrapper('model/face_landmarker.task')
+        except Exception as e2:
+            import traceback
+            st.error("### 🔍 MediaPipe Diagnostic Report")
+            st.write(f"**Python Version**: {sys.version}")
+            
+            mp_loaded = "Not Loaded"
+            mp_path = "N/A"
+            mp_contents = []
+            try:
+                import mediapipe as mp
+                mp_loaded = getattr(mp, "__version__", "unknown")
+                mp_path = getattr(mp, "__file__", "unknown")
+                if mp_path and mp_path != "unknown":
+                    mp_dir = os.path.dirname(mp_path)
+                    mp_contents = os.listdir(mp_dir)
+            except Exception as mpe:
+                mp_loaded = f"Error: {mpe}"
+                
+            st.write(f"**MediaPipe Version**: {mp_loaded}")
+            st.write(f"**MediaPipe Path**: {mp_path}")
+            st.write(f"**MediaPipe Dir Contents**: {mp_contents}")
+            
+            try:
+                import google.protobuf as pb
+                st.write(f"**Protobuf Version**: {pb.__version__}")
+            except Exception as pbe:
+                st.write(f"**Protobuf Error**: {pbe}")
+            
+            st.write("**Detailed Import Traceback (Legacy Solutions Error)**:")
             st.code(traceback.format_exc())
+            st.write(f"**Modern Tasks API Error**: {e2}")
             
-        st.stop()
+            st.stop()
 
 face_mesh = load_mediapipe()
 
@@ -656,23 +685,7 @@ def get_lip_mask_and_landmarks(image_bgr):
 
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.fillPoly(mask, [outer_pts], 255)   # outer lip boundary
-    cv2.fillPoly(mask, [inner_pts], 255)   # inner area (fills any gap)
-
-    # ── Exclude the mouth opening (dark gap between lips when mouth is open)
-    # Use the four inner corners: left inner corner = 78, right = 308, top = 13, bottom = 14
-    # Build a mouth-opening mask only if the mouth gap is significant
-    mouth_top = int(lm[13].y * h)
-    mouth_bot = int(lm[14].y * h)
-    mouth_gap = mouth_bot - mouth_top
-    if mouth_gap > 4:
-        # The visible gap between upper and lower lip (inside the mouth)
-        # defined by inner lower top edge and inner upper bottom edge
-        gap_pts = pts([78, 191, 80, 81, 82, 13, 312, 311, 310, 415,
-                        308, 324, 318, 402, 317, 14, 87, 178, 88, 95])
-        # Fill the inner mouth area black to exclude it, but only if it's
-        # significantly below the upper inner and above the lower inner
-        # (we keep the lips themselves, just remove the open gap)
-        pass  # keep both polygons filled — they don't usually include open mouth
+    cv2.fillPoly(mask, [inner_pts], 0)     # subtract inner mouth opening/cavity so lipstick is not applied inside the mouth
 
     # Upper lip sub-mask for gloss
     upper_mask = np.zeros((h, w), dtype=np.uint8)
