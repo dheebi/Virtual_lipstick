@@ -1238,6 +1238,8 @@ if "current_page" not in st.session_state:
     st.session_state.current_page = "✨ AURALITH Home"
 if "saved_looks" not in st.session_state:
     st.session_state.saved_looks = []
+if "processed_captures" not in st.session_state:
+    st.session_state.processed_captures = set()
 if "try_on_history" not in st.session_state:
     st.session_state.try_on_history = []
 if "skin_tone_history" not in st.session_state:
@@ -1941,6 +1943,7 @@ def render_sidebar():
             st.session_state.logged_in = False
             st.session_state.username = ""
             st.session_state.saved_looks = []
+            st.session_state.processed_captures = set()
             st.session_state.current_page = "✨ AURALITH Home"
             st.rerun()
 
@@ -2751,39 +2754,45 @@ def render_live_studio_page():
         
         # Handle captured look from the component
         if res and res.get("action") == "capture_live_look":
-            img_data_base64 = res["image_data"].split(",")[1]
-            import base64
-            img_bytes = base64.b64decode(img_data_base64)
+            capture_id = res.get("capture_id")
+            if "processed_captures" not in st.session_state:
+                st.session_state.processed_captures = set()
             
-            look_id = str(uuid.uuid4())
-            user_dir = get_user_profile_dir(st.session_state.username)
-            user_images_dir = os.path.join(user_dir, "images")
-            os.makedirs(user_images_dir, exist_ok=True)
-            
-            img_filename = f"{look_id}.png"
-            img_path = os.path.join(user_images_dir, img_filename)
-            
-            with open(img_path, "wb") as f_img:
-                f_img.write(img_bytes)
+            if capture_id not in st.session_state.processed_captures:
+                st.session_state.processed_captures.add(capture_id)
+                img_data_base64 = res["image_data"].split(",")[1]
+                import base64
+                img_bytes = base64.b64decode(img_data_base64)
                 
-            look_data = {
-                "id": look_id,
-                "shade": res["shade"],
-                "palette": palette,
-                "finish": res["finish"],
-                "opacity": opacity,
-                "skin_tone": last_detected_skin,
-                "undertone": last_detected_undertone,
-                "beauty_score": res["beauty_score"],
-                "harmony": res["harmony"],
-                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "bgr": tuple(int(c) for c in final_color),
-                "image_path": img_path
-            }
-            st.session_state.saved_looks.append(look_data)
-            save_user_looks(st.session_state.username, st.session_state.saved_looks)
-            st.success("📸 Live capture saved to your Lookbook! ✦")
-            st.rerun()
+                look_id = str(uuid.uuid4())
+                user_dir = get_user_profile_dir(st.session_state.username)
+                user_images_dir = os.path.join(user_dir, "images")
+                os.makedirs(user_images_dir, exist_ok=True)
+                
+                img_filename = f"{look_id}.png"
+                img_path = os.path.join(user_images_dir, img_filename)
+                
+                with open(img_path, "wb") as f_img:
+                    f_img.write(img_bytes)
+                    
+                look_data = {
+                    "id": look_id,
+                    "shade": res["shade"],
+                    "palette": palette,
+                    "finish": res["finish"],
+                    "opacity": opacity,
+                    "skin_tone": last_detected_skin,
+                    "undertone": last_detected_undertone,
+                    "beauty_score": res["beauty_score"],
+                    "harmony": res["harmony"],
+                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "bgr": tuple(int(c) for c in final_color),
+                    "image_path": img_path
+                }
+                st.session_state.saved_looks.append(look_data)
+                save_user_looks(st.session_state.username, st.session_state.saved_looks)
+                st.success("📸 Live capture saved to your Lookbook! ✦")
+                st.rerun()
 
 def render_mobile_page():
     st.markdown("""

@@ -518,6 +518,7 @@
     tempCtx.drawImage(canvasEl, 0, 0);
     
     const base64Image = tempCanvas.toDataURL("image/png");
+    const captureId = 'cap_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
     // Post snapshot data to Streamlit component receiver
     window.parent.postMessage({
@@ -525,6 +526,7 @@
       type: "streamlit:setComponentValue",
       value: {
         action: "capture_live_look",
+        capture_id: captureId,
         image_data: base64Image,
         shade: activeShade,
         finish: finish,
