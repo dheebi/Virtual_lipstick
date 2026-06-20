@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AURALITH Live Studio</title>
+  
+  <!-- MediaPipe Face Mesh and Camera CDN Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: transparent;
+      font-family: 'Outfit', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #live-container {
+      position: relative;
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      aspect-ratio: 4/3;
+      border-radius: 20px;
+      border: 2px solid #d4a373;
+      background-color: #0b060c;
+      box-shadow: 0 20px 50px rgba(43, 16, 32, 0.25);
+      overflow: hidden;
+    }
+
+    #webcam {
+      display: none;
+      transform: scaleX(-1);
+    }
+
+    #output-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      transform: scaleX(-1); /* Mirror camera feed */
+    }
+
+    /* Luxury Loading Loader Overlay */
+    #loader-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #1b0c16 0%, #0b060c 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      transition: opacity 0.5s ease-out;
+    }
+
+    .loader-ring {
+      width: 60px;
+      height: 60px;
+      border: 3px solid rgba(212, 163, 115, 0.15);
+      border-radius: 50%;
+      border-top-color: #fc2779;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #loader-text {
+      font-family: 'Montserrat', sans-serif;
+      color: #fc2779;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+    }
+
+    #loader-subtext {
+      color: #8b8b9c;
+      font-size: 11px;
+      font-weight: 300;
+    }
+
+    /* Floating Panel UI */
+    .floating-hud {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      right: 15px;
+      pointer-events: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      z-index: 10;
+    }
+
+    .hud-card {
+      background: rgba(18, 9, 16, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(212, 163, 115, 0.35);
+      padding: 10px 14px;
+      border-radius: 12px;
+      color: #ffffff;
+      pointer-events: auto;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+
+    .hud-title {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #d4a373;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .hud-value {
+      font-family: 'Montserrat', sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .hud-score {
+      font-size: 18px;
+      color: #fc2779;
+      font-weight: 800;
+    }
+
+    /* Bottom HUD Controls bar */
+    .controls-overlay {
+      position: absolute;
+      bottom: 15px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      z-index: 10;
+      pointer-events: auto;
+    }
+
+    .btn-action {
+      background: #ffffff;
+      color: #2b1020;
+      border: 1.5px solid #d4a373;
+      border-radius: 20px;
+      font-family: 'Montserrat', sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 8px 16px;
+      cursor: pointer;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+      transition: all 0.25s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .btn-action:hover {
+      background: #fc2779;
+      color: #ffffff;
+      border-color: #fc2779;
+      transform: translateY(-2px);
+    }
+
+    .btn-action:active {
+      transform: translateY(0);
+    }
+
+    .btn-stop {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-stop:hover {
+      background: #dc3545;
+      border-color: #dc3545;
+    }
+
+    .shading-badge {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.4);
+    }
+
+    /* Webcam feed indicator */
+    #status-indicator {
+      position: absolute;
+      top: 15px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(18, 9, 16, 0.8);
+      padding: 4px 10px;
+      border-radius: 20px;
+      color: #ffffff;
+      font-size: 9px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid rgba(252, 39, 121, 0.25);
+    }
+
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      background-color: #28a745;
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.9); opacity: 0.6; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.6; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="live-container">
+  <!-- Webcam Video Stream -->
+  <video id="webcam" autoplay playsinline muted></video>
+  
+  <!-- Canvas Display -->
+  <canvas id="output-canvas" width="640" height="480"></canvas>
+  
+  <!-- Running HUD Status -->
+  <div id="status-indicator" style="display: none;">
+    <div class="pulse-dot"></div>
+    <span>AURALITH V3.1 Live Feed</span>
+  </div>
+
+  <!-- Loading Screen Overlay -->
+  <div id="loader-overlay">
+    <div class="loader-ring"></div>
+    <div id="loader-text">Initializing Beauty Engine...</div>
+    <div id="loader-subtext">✦ Activating Facial Intelligence...</div>
+  </div>
+
+  <!-- HUD Floating Panels -->
+  <div class="floating-hud">
+    <!-- Active Shade Panel -->
+    <div class="hud-card" id="hud-shade-card" style="display: none;">
+      <div class="hud-title" id="hud-shade-collection">AURA ROUGE COLLECTION</div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="shading-badge" id="hud-shade-badge" style="background-color: rgb(200, 30, 30);"></span>
+        <span class="hud-value" id="hud-shade-name">Ruby Aura</span>
+      </div>
+      <div style="font-size: 9px; color: #8b8b9c; margin-top: 4px;" id="hud-shade-meta">
+        Occasion: Evening Event | Mood: Bold & Confident
+      </div>
+    </div>
+    
+    <!-- Score Panel -->
+    <div class="hud-card" id="hud-score-card" style="display: none; text-align: right;">
+      <div class="hud-title">AURALITH BEAUTY SCORE™</div>
+      <div class="hud-score" id="hud-beauty-score">94 <span style="font-size: 10px; font-weight: 500; color: #ffffff;">/ 100</span></div>
+      <div style="font-size: 9px; color: #d4a373; font-weight: 700; text-transform: uppercase;" id="hud-harmony">Exceptional Harmony</div>
+    </div>
+  </div>
+
+  <!-- Overlay Button Controls -->
+  <div class="controls-overlay">
+    <button class="btn-action" id="btn-start" onclick="startCamera()">
+      🎥 Activate Camera
+    </button>
+    <button class="btn-action" id="btn-capture" onclick="captureLook()" style="display: none;">
+      📸 Capture Look
+    </button>
+    <button class="btn-action btn-stop" id="btn-stop" onclick="stopCamera()" style="display: none;">
+      🛑 Stop
+    </button>
+  </div>
+</div>
+
+<script>
+  // Face Mesh Landmarks loops (468-point index mapped)
+  const UPPER_LIP_OUTER = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291];
+  const LOWER_LIP_OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291];
+  const UPPER_LIP_INNER = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308];
+  const LOWER_LIP_INNER = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308];
+
+  const LOWER_LIP_OUTER_REV = [...LOWER_LIP_OUTER].reverse().slice(1, -1);
+  const OUTER_LIP_LOOP = [...UPPER_LIP_OUTER, ...LOWER_LIP_OUTER_REV];
+
+  const LOWER_LIP_INNER_REV = [...LOWER_LIP_INNER].reverse().slice(1, -1);
+  const INNER_LIP_LOOP = [...UPPER_LIP_INNER, ...LOWER_LIP_INNER_REV];
+
+  // DOM Elements
+  const container = document.getElementById("live-container");
+  const videoEl = document.getElementById("webcam");
+  const canvasEl = document.getElementById("output-canvas");
+  const ctx = canvasEl.getContext("2d");
+  
+  const loaderOverlay = document.getElementById("loader-overlay");
+  const loaderText = document.getElementById("loader-text");
+  const loaderSubtext = document.getElementById("loader-subtext");
+  
+  const statusIndicator = document.getElementById("status-indicator");
+  const btnStart = document.getElementById("btn-start");
+  const btnCapture = document.getElementById("btn-capture");
+  const btnStop = document.getElementById("btn-stop");
+  
+  const hudShade = document.getElementById("hud-shade-card");
+  const hudScore = document.getElementById("hud-score-card");
+
+  // Dynamic parameters synced from Streamlit
+  let activeShade = "Ruby Aura";
+  let activeCollection = "Aura Rouge Collection";
+  let shadeColor = {r: 200, g: 30, b: 30}; // BGR or RGB depending on sync (let's assume BGR since it matches Python)
+  let opacity = 0.65;
+  let finish = "Glossy 💋";
+  let linerMode = "None";
+  let linerColor = {r: 140, g: 10, b: 15}; // recommended liner (BGR: Crimson Define)
+  let volumeEnhancement = "Natural";
+  
+  let matchScore = 85;
+  let beautyScore = 94;
+  let harmony = "Exceptional Harmony";
+  let recLevel = "Exceptional Match";
+  let mood = "Bold & Confident";
+  let occasion = "Evening Event";
+
+  let cameraHelper = null;
+  let faceMesh = null;
+  let cameraActive = false;
+  let firstDetection = false;
+  let loadSequence = 0;
+
+  // Loader dynamic animation sequence
+  const loaderSteps = [
+    { text: "Initializing Beauty Engine...", sub: "✦ Activating Facial Intelligence..." },
+    { text: "Detecting Lip Structure...", sub: "✦ Mapping Beauty Contours..." },
+    { text: "Analyzing Complexion Profile...", sub: "✦ Detecting Undertones..." },
+    { text: "Calculating Beauty Score...", sub: "✦ Generating Luxury Finish..." },
+    { text: "Rendering AI Beauty Preview...", sub: "✦ Finalizing Live Canvas..." }
+  ];
+
+  function runLoaderSequence(callback) {
+    loaderOverlay.style.opacity = "1";
+    loaderOverlay.style.display = "flex";
+    loadSequence = 0;
+    
+    let interval = setInterval(() => {
+      if (loadSequence < loaderSteps.length) {
+        loaderText.innerText = loaderSteps[loadSequence].text;
+        loaderSubtext.innerText = loaderSteps[loadSequence].sub;
+        loadSequence++;
+      } else {
+        clearInterval(interval);
+        loaderOverlay.style.opacity = "0";
+        setTimeout(() => {
+          loaderOverlay.style.display = "none";
+          if (callback) callback();
+        }, 500);
+      }
+    }, 200);
+  }
+
+  // Communicate with Streamlit
+  function updateParams(args) {
+    if (!args) return;
+    
+    if (args.shade_name) activeShade = args.shade_name;
+    if (args.collection) activeCollection = args.collection;
+    if (args.color_bgr) {
+      // Streamlit sends BGR color tuple
+      shadeColor = {
+        r: args.color_bgr[2],
+        g: args.color_bgr[1],
+        b: args.color_bgr[0]
+      };
+    }
+    if (args.opacity) opacity = args.opacity;
+    if (args.finish) finish = args.finish;
+    if (args.liner_mode) linerMode = args.liner_mode;
+    if (args.liner_color_bgr) {
+      linerColor = {
+        r: args.liner_color_bgr[2],
+        g: args.liner_color_bgr[1],
+        b: args.liner_color_bgr[0]
+      };
+    }
+    if (args.volume_enhancement) volumeEnhancement = args.volume_enhancement;
+    
+    if (args.match_score) matchScore = args.match_score;
+    if (args.beauty_score) beautyScore = args.beauty_score;
+    if (args.harmony) harmony = args.harmony;
+    if (args.rec_level) recLevel = args.rec_level;
+    if (args.mood) mood = args.mood;
+    if (args.occasion) occasion = args.occasion;
+    
+    // Update HTML overlay elements
+    document.getElementById("hud-shade-collection").innerText = activeCollection.toUpperCase();
+    document.getElementById("hud-shade-name").innerText = activeShade;
+    document.getElementById("hud-shade-badge").style.backgroundColor = `rgb(${shadeColor.r}, ${shadeColor.g}, ${shadeColor.b})`;
+    document.getElementById("hud-shade-meta").innerText = `Occasion: ${occasion} | Mood: ${mood}`;
+    
+    document.getElementById("hud-beauty-score").innerHTML = `${beautyScore} <span style="font-size: 10px; font-weight: 500; color: #ffffff;">/ 100</span>`;
+    document.getElementById("hud-harmony").innerText = harmony;
+  }
+
+  // Streamlit rendering message event listener
+  window.addEventListener("message", function(event) {
+    if (event.data.type === "streamlit:render") {
+      updateParams(event.data.args);
+    }
+  });
+
+  // Start webcam feed and load face mesh models
+  function startCamera() {
+    btnStart.style.display = "none";
+    runLoaderSequence(() => {
+      initFaceMesh();
+    });
+  }
+
+  function initFaceMesh() {
+    faceMesh = new FaceMesh({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+    
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    
+    faceMesh.onResults(onResults);
+    
+    cameraHelper = new Camera(videoEl, {
+      onFrame: async () => {
+        if (cameraActive) {
+          await faceMesh.send({ image: videoEl });
+        }
+      },
+      width: 640,
+      height: 480
+    });
+    
+    cameraActive = true;
+    cameraHelper.start()
+      .then(() => {
+        statusIndicator.style.display = "flex";
+        btnCapture.style.display = "inline-flex";
+        btnStop.style.display = "inline-flex";
+        hudShade.style.display = "block";
+        hudScore.style.display = "block";
+        
+        // Notify Streamlit height adjustment
+        adjustHeight();
+      })
+      .catch((err) => {
+        console.error("Camera access failed:", err);
+        alert("Camera access denied or device in use. Please check permissions.");
+        btnStart.style.display = "inline-flex";
+        statusIndicator.style.display = "none";
+        btnCapture.style.display = "none";
+        btnStop.style.display = "none";
+        hudShade.style.display = "none";
+        hudScore.style.display = "none";
+        loaderOverlay.style.display = "none";
+        cameraActive = false;
+      });
+  }
+
+  function stopCamera() {
+    cameraActive = false;
+    if (cameraHelper) {
+      cameraHelper.stop();
+    }
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    
+    statusIndicator.style.display = "none";
+    btnCapture.style.display = "none";
+    btnStop.style.display = "none";
+    hudShade.style.display = "none";
+    hudScore.style.display = "none";
+    btnStart.style.display = "inline-flex";
+    adjustHeight();
+  }
+
+  // Capture look and send image back to Streamlit
+  function captureLook() {
+    // Get mirrored frame snapshot
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = canvasEl.width;
+    tempCanvas.height = canvasEl.height;
+    const tempCtx = tempCanvas.getContext("2d");
+    
+    // Draw mirrored back to normal BGR screenshot
+    tempCtx.translate(canvasEl.width, 0);
+    tempCtx.scale(-1, 1);
+    tempCtx.drawImage(canvasEl, 0, 0);
+    
+    const base64Image = tempCanvas.toDataURL("image/png");
+    
+    // Post snapshot data to Streamlit component receiver
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setComponentValue",
+      value: {
+        action: "capture_live_look",
+        image_data: base64Image,
+        shade: activeShade,
+        finish: finish,
+        beauty_score: beautyScore,
+        harmony: harmony,
+        timestamp: new Date().toLocaleTimeString()
+      }
+    }, "*");
+  }
+
+  function setHeight(h) {
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setFrameHeight",
+      height: h
+    }, "*");
+  }
+
+  function adjustHeight() {
+    const el = document.getElementById("live-container");
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      setHeight(Math.ceil(rect.height) + 10);
+    }
+  }
+
+  window.addEventListener("resize", adjustHeight);
+
+  // Callback on FaceMesh detection results
+  function onResults(results) {
+    if (!cameraActive) return;
+    
+    ctx.save();
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    
+    // 1. Draw raw camera frame
+    ctx.drawImage(results.image, 0, 0, canvasEl.width, canvasEl.height);
+    
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+      const landmarks = results.multiFaceLandmarks[0];
+      
+      // Draw beauty overlay
+      drawBeautyEffects(landmarks, canvasEl.width, canvasEl.height);
+    }
+    ctx.restore();
+  }
+
+  // Rendering engine in JS
+  function drawBeautyEffects(landmarks, w, h) {
+    // 1. Compute Lip Dilation vectors for Lip Volume Enhancement
+    let scaleFactor = 0;
+    if (volumeEnhancement === "Soft Volume") scaleFactor = 0.035;
+    else if (volumeEnhancement === "Editorial Volume") scaleFactor = 0.07;
+    
+    // Calculate lip center coordinates
+    const ptLeftCorner = landmarks[61];
+    const ptRightCorner = landmarks[291];
+    const ptTop = landmarks[0];
+    const ptBottom = landmarks[17];
+    
+    const cX = (ptLeftCorner.x + ptRightCorner.x) / 2 * w;
+    const cY = (ptTop.y + ptBottom.y) / 2 * h;
+
+    function getModifiedPt(idx) {
+      const pt = landmarks[idx];
+      let px = pt.x * w;
+      let py = pt.y * h;
+      
+      if (scaleFactor > 0) {
+        const dx = px - cX;
+        const dy = py - cY;
+        px += dx * scaleFactor;
+        py += dy * scaleFactor;
+      }
+      return {x: px, y: py};
+    }
+
+    // Map dilated contour vertices
+    const outerPts = OUTER_LIP_LOOP.map(getModifiedPt);
+    const innerPts = INNER_LIP_LOOP.map(getModifiedPt);
+    
+    // Draw Lipstick Fill Overlay
+    ctx.save();
+    ctx.beginPath();
+    
+    // Outer boundary
+    ctx.moveTo(outerPts[0].x, outerPts[0].y);
+    for (let i = 1; i < outerPts.length; i++) {
+      ctx.lineTo(outerPts[i].x, outerPts[i].y);
+    }
+    ctx.closePath();
+    
+    // Inner boundary (evenodd subtraction)
+    ctx.moveTo(innerPts[0].x, innerPts[0].y);
+    for (let i = 1; i < innerPts.length; i++) {
+      ctx.lineTo(innerPts[i].x, innerPts[i].y);
+    }
+    ctx.closePath();
+    
+    ctx.clip('evenodd');
+    
+    // Draw Base Lipstick Color Blend
+    const rgbStr = `${shadeColor.r}, ${shadeColor.g}, ${shadeColor.b}`;
+    
+    if (finish === "Matte 💄" || finish === "Velvet Finish 🪄") {
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.fillStyle = `rgba(${rgbStr}, ${opacity * 0.9})`;
+      ctx.fill();
+    } else {
+      // Luminous Glass / Glossy / Satin double layer
+      ctx.globalCompositeOperation = 'color';
+      ctx.fillStyle = `rgba(${rgbStr}, ${opacity})`;
+      ctx.fill();
+      
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.fillStyle = `rgba(${rgbStr}, ${opacity * 0.45})`;
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 2. Gloss highlight effects
+    if (finish !== "Matte 💄" && finish !== "Velvet Finish 🪄") {
+      ctx.save();
+      // Clip to lip boundary
+      ctx.beginPath();
+      ctx.moveTo(outerPts[0].x, outerPts[0].y);
+      for (let i = 1; i < outerPts.length; i++) ctx.lineTo(outerPts[i].x, outerPts[i].y);
+      ctx.closePath();
+      ctx.moveTo(innerPts[0].x, innerPts[0].y);
+      for (let i = 1; i < innerPts.length; i++) ctx.lineTo(innerPts[i].x, innerPts[i].y);
+      ctx.closePath();
+      ctx.clip('evenodd');
+      
+      ctx.globalCompositeOperation = 'screen';
+      
+      let glossVal = 0.12; // soft standard gloss
+      let sizeMult = 3.5;  // very wide gradient
+      if (finish === "Glass Finish 💎") {
+        glossVal = 0.20;
+        sizeMult = 2.5;    // slightly narrower but still wide
+      } else if (finish === "Satin ✨") {
+        glossVal = 0.06;
+        sizeMult = 5.0;    // extremely soft and wide
+      }
+      
+      // Upper lip center
+      const ptUp = getModifiedPt(13);
+      const radiusUp = (getModifiedPt(17).y - getModifiedPt(0).y) * 0.15;
+      
+      let gradUp = ctx.createRadialGradient(ptUp.x, ptUp.y - radiusUp * 0.4, 0, ptUp.x, ptUp.y - radiusUp * 0.4, radiusUp * sizeMult);
+      gradUp.addColorStop(0, `rgba(255, 255, 255, ${glossVal})`);
+      gradUp.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = gradUp;
+      ctx.beginPath();
+      ctx.arc(ptUp.x, ptUp.y - radiusUp * 0.4, radiusUp * sizeMult, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Lower lip center
+      const ptLo = getModifiedPt(14);
+      const radiusLo = (getModifiedPt(17).y - getModifiedPt(0).y) * 0.28;
+      
+      let gradLo = ctx.createRadialGradient(ptLo.x, ptLo.y + radiusLo * 0.3, 0, ptLo.x, ptLo.y + radiusLo * 0.3, radiusLo * sizeMult * 0.9);
+      gradLo.addColorStop(0, `rgba(255, 255, 255, ${glossVal * 1.2})`);
+      gradLo.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = gradLo;
+      ctx.beginPath();
+      ctx.arc(ptLo.x, ptLo.y + radiusLo * 0.3, radiusLo * sizeMult * 0.9, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.restore();
+    }
+    
+    // 3. Smart Lip Liner Simulation
+    if (linerMode !== "None") {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(outerPts[0].x, outerPts[0].y);
+      for (let i = 1; i < outerPts.length; i++) {
+        ctx.lineTo(outerPts[i].x, outerPts[i].y);
+      }
+      ctx.closePath();
+      
+      let lineThick = 2.0;
+      let blurRadius = 3;
+      let opacityLiner = 0.65;
+      
+      if (linerMode === "Natural Define") {
+        lineThick = 1.5;
+        blurRadius = 2;
+        opacityLiner = 0.65;
+      } else if (linerMode === "Soft Volume") {
+        lineThick = 2.5;
+        blurRadius = 4;
+        opacityLiner = 0.75;
+      } else if (linerMode === "Precision Luxe") {
+        lineThick = 2.0;
+        blurRadius = 0; // sharp outline
+        opacityLiner = 0.85;
+      } else if (linerMode === "Dramatic Glam") {
+        lineThick = 3.5;
+        blurRadius = 3;
+        opacityLiner = 0.90;
+      }
+      
+      ctx.strokeStyle = `rgba(${linerColor.r}, ${linerColor.g}, ${linerColor.b}, ${opacityLiner})`;
+      ctx.lineWidth = lineThick;
+      
+      if (blurRadius > 0) {
+        ctx.shadowColor = `rgba(${linerColor.r}, ${linerColor.g}, ${linerColor.b}, ${opacityLiner})`;
+        ctx.shadowBlur = blurRadius;
+      } else {
+        ctx.shadowBlur = 0;
+      }
+      
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // Initialize page frame size
+  window.onload = function() {
+    // Notify Streamlit that the component is ready
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:componentReady",
+      apiVersion: 1
+    }, "*");
+
+    // Adjust height dynamically
+    setTimeout(adjustHeight, 50);
+    // Render initial state
+    loaderOverlay.style.display = "none";
+  }
+</script>
+
+</body>
+</html>

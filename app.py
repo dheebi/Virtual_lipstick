@@ -103,6 +103,14 @@ def authenticate_user(username, password):
 init_user_db()
 
 # =========================
+# LIVE BEAUTY STUDIO CUSTOM COMPONENT
+# =========================
+live_beauty_studio = components.declare_component(
+    "live_beauty_studio",
+    path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "live_beauty_component")
+)
+
+# =========================
 # PROFILE-BASED LOOK PERSISTENCE
 # =========================
 import json
@@ -116,6 +124,75 @@ def get_user_profile_dir(username):
     if not clean_username:
         clean_username = "default_user"
     return os.path.join(PROFILE_BASE_DIR, clean_username)
+
+def calculate_beauty_analytics(looks_list):
+    if not looks_list:
+        return {
+            "preferred_finish": "None",
+            "favorite_collection": "None",
+            "most_used_shade": "None",
+            "average_match_score": 0,
+            "average_beauty_score": 0,
+            "last_detected_complexion": "Not Detected",
+            "last_detected_undertone": "Not Detected",
+            "personality_summary": "Start saving looks to discover and define your signature beauty style."
+        }
+        
+    finishes = [l["finish"] for l in looks_list]
+    pref_finish = max(set(finishes), key=finishes.count) if finishes else "None"
+    
+    palettes = [l["palette"] for l in looks_list]
+    fav_palette = max(set(palettes), key=palettes.count) if palettes else "None"
+    
+    shades = [l["shade"] for l in looks_list]
+    most_used_shade = max(set(shades), key=shades.count) if shades else "None"
+    
+    total_score = 0
+    total_b_score = 0
+    count = 0
+    last_complexion = "Not Detected"
+    last_undertone = "Not Detected"
+    
+    for l in looks_list:
+        tone = l.get("skin_tone", "Not Detected")
+        undertone = l.get("undertone", "Not Detected")
+        
+        if tone != "Not Detected" and tone != "None":
+            last_complexion = tone
+        if undertone != "Not Detected" and undertone != "None":
+            last_undertone = undertone
+            
+        score, _ = get_match_score(l["shade"], tone if tone != "Not Detected" else None, l["finish"])
+        b_score, _, _ = get_beauty_score_and_harmony(score, l["shade"], undertone if undertone != "Not Detected" else None)
+        
+        total_score += score
+        total_b_score += b_score
+        count += 1
+        
+    avg_score = int(total_score / count) if count > 0 else 0
+    avg_b_score = int(total_b_score / count) if count > 0 else 0
+    
+    # Generate dynamic personality summary
+    clean_finish = pref_finish.replace(" 💋", "").replace(" ✨", "").replace(" 💄", "").replace(" 🪄", "").replace(" 💎", "").lower()
+    clean_collection = fav_palette.replace("💋 ", "").replace("🌸 ", "").replace("🌿 ", "").replace("🍇 ", "").replace("🌊 ", "").replace("🔮 ", "").lower()
+    
+    if "rouge" in clean_collection or "plum" in clean_collection or "berry" in clean_collection:
+        vibe = "sophisticated evening-inspired looks"
+    else:
+        vibe = "effortless daily-wear radiance"
+        
+    personality_summary = f"Your beauty profile reflects a preference for {clean_finish} {most_used_shade.lower()} tones, luxury {clean_collection} collections, and {vibe}."
+    
+    return {
+        "preferred_finish": pref_finish,
+        "favorite_collection": fav_palette,
+        "most_used_shade": most_used_shade,
+        "average_match_score": avg_score,
+        "average_beauty_score": avg_b_score,
+        "last_detected_complexion": last_complexion,
+        "last_detected_undertone": last_undertone,
+        "personality_summary": personality_summary
+    }
 
 def load_user_looks(username):
     user_dir = get_user_profile_dir(username)
@@ -131,7 +208,10 @@ def load_user_looks(username):
         
     try:
         with open(looks_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            if isinstance(data, dict) and "looks" in data:
+                return data["looks"]
+            return data
     except Exception:
         return []
 
@@ -142,8 +222,13 @@ def save_user_looks(username, looks_list):
     os.makedirs(user_dir, exist_ok=True)
     
     try:
+        analytics = calculate_beauty_analytics(looks_list)
+        data = {
+            "looks": looks_list,
+            "analytics": analytics
+        }
         with open(looks_file, "w", encoding="utf-8") as f:
-            json.dump(looks_list, f, indent=4)
+            json.dump(data, f, indent=4)
         return True
     except Exception:
         return False
@@ -452,22 +537,24 @@ div.stButton > button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-components.html("""
+st.html("""
 <script>
 (function() {
-  var _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-  navigator.mediaDevices.getUserMedia = function(constraints) {
-    if (constraints && constraints.video) {
-      var base = typeof constraints.video === 'object' ? constraints.video : {};
-      constraints.video = Object.assign({}, base, {
-        width:  { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user'
-      });
-    }
-    return _orig(constraints);
-  };
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    var _orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = function(constraints) {
+      if (constraints && constraints.video) {
+        var base = typeof constraints.video === 'object' ? constraints.video : {};
+        constraints.video = Object.assign({}, base, {
+          width:  { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user'
+        });
+      }
+      return _orig(constraints);
+    };
+  }
 })();
 </script>
-""", height=0)
+""", unsafe_allow_javascript=True)
 
 # =========================
 # MEDIAPIPE
@@ -588,41 +675,53 @@ lipstick_palettes = {
         "Ruby Aura":      ( 30,  30, 200),   # pure bright red
         "Crimson Lith":   ( 15,  10, 140),   # deep crimson
         "Velvet Wine":    ( 20,  20, 170),   # velvet dark wine
+        "Scarlet Ember":  ( 20,  40, 230),   # bright scarlet red
+        "Rose Garnet":    ( 50,  20, 160),   # deep rose-garnet red
     },
     "🌿 Quartz Nude Series": {
         "Silk Caramel":   ( 45,  75, 155),   # warm caramel
         "Satin Taupe":    (160, 180, 205),   # cool beige-taupe
         "Peach Cashmere": (150, 175, 220),   # soft peach-nude
+        "Nude Quartz":    (170, 185, 215),   # delicate soft nude-rose
+        "Almond Silk":    (110, 135, 190),   # warm toasted almond
     },
     "🌸 Pink Aura Collection": {
         "Blush Quartz":   (195, 170, 240),   # delicate blush pink
         "Rose Opal":      (120,  80, 210),   # medium rose pink
         "Fuchsia Neon":   (130,  20, 230),   # vivid fuchsia
+        "Petal Glow":     (180, 150, 235),   # soft warm petal pink
+        "Pink Sapphire":  (160,  60, 235),   # luminous vibrant pink
     },
     "🍇 Berry Luxe Collection": {
         "Plum Crystal":   ( 75,  15, 120),   # rich medium plum
         "Mulberry Silk":  ( 95,  20, 155),   # mulberry berry-pink
         "Royal Berry":    ( 60,   8, 108),   # royal dark berry
+        "Blackberry Muse": ( 55,  10,  95),   # deep dark blackberry
+        "Velvet Mulberry": ( 80,  25, 135),   # rich warm mulberry
     },
     "🌊 Coral Glow Collection": {
         "Sunset Coral":   ( 95, 135, 250),   # bright coral-pink
         "Amber Nude":     ( 60, 110, 240),   # warm amber-orange
         "Sienna Glow":    ( 35,  65, 175),   # earthy terracotta
+        "Coral Bloom":    ( 90, 120, 245),   # soft radiant coral
+        "Peach Sunrise":  (110, 150, 255),   # peachy orange-pink
     },
     "🔮 Velvet Plum Edition": {
         "Deep Amethyst":  ( 50,  10,  90),   # deep intense plum
         "Velvet Orchid":  ( 80,  20, 110),   # magenta orchid
         "Dark Dahlia":    ( 30,   5,  60),   # dramatic near-black plum
+        "Midnight Plum":  ( 40,   5,  70),   # very dark midnight plum
+        "Violet Eclipse": (100,  15,  95),   # deep royal violet-plum
     }
 }
 
 SKIN_TONE_RECOMMENDATIONS = {
-    "Fair":   ["Blush Quartz", "Rose Opal", "Plum Crystal", "Mulberry Silk", "Peach Cashmere"],
-    "Light":  ["Rose Opal", "Peach Cashmere", "Sunset Coral", "Blush Quartz", "Silk Caramel"],
-    "Medium": ["Satin Taupe", "Sunset Coral", "Amber Nude", "Ruby Aura", "Silk Caramel"],
-    "Olive":  ["Sienna Glow", "Silk Caramel", "Crimson Lith", "Amber Nude", "Velvet Wine"],
-    "Tan":    ["Velvet Wine", "Royal Berry", "Sienna Glow", "Velvet Orchid", "Deep Amethyst"],
-    "Deep":   ["Deep Amethyst", "Dark Dahlia", "Royal Berry", "Fuchsia Neon", "Velvet Orchid"],
+    "Fair":   ["Blush Quartz", "Rose Opal", "Plum Crystal", "Mulberry Silk", "Peach Cashmere", "Petal Glow", "Nude Quartz", "Pink Sapphire"],
+    "Light":  ["Rose Opal", "Peach Cashmere", "Sunset Coral", "Blush Quartz", "Silk Caramel", "Almond Silk", "Coral Bloom", "Petal Glow"],
+    "Medium": ["Satin Taupe", "Sunset Coral", "Amber Nude", "Ruby Aura", "Silk Caramel", "Peach Sunrise", "Almond Silk", "Scarlet Ember"],
+    "Olive":  ["Sienna Glow", "Silk Caramel", "Crimson Lith", "Amber Nude", "Velvet Wine", "Rose Garnet", "Velvet Mulberry", "Coral Bloom"],
+    "Tan":    ["Velvet Wine", "Royal Berry", "Sienna Glow", "Velvet Orchid", "Deep Amethyst", "Velvet Mulberry", "Violet Eclipse", "Scarlet Ember"],
+    "Deep":   ["Deep Amethyst", "Dark Dahlia", "Royal Berry", "Fuchsia Neon", "Velvet Orchid", "Midnight Plum", "Blackberry Muse", "Violet Eclipse"],
 }
 SKIN_TONE_COLORS = {
     "Fair": "#f5deb3", "Light": "#deb887", "Medium": "#c8a37a",
@@ -630,10 +729,205 @@ SKIN_TONE_COLORS = {
 }
 
 ALL_SHADES = {}
+
+SHADE_METADATA = {
+    # Reds
+    "Ruby Aura": {"mood": "Bold & Confident", "occasion": "Evening Event"},
+    "Crimson Lith": {"mood": "Seductive & Regal", "occasion": "Gala & Red Carpet"},
+    "Velvet Wine": {"mood": "Mysterious & Intense", "occasion": "Night Out"},
+    "Scarlet Ember": {"mood": "Fiery & Passionate", "occasion": "Cocktail Party"},
+    "Rose Garnet": {"mood": "Romantic & Sophisticated", "occasion": "Anniversary Dinner"},
+    
+    # Nudes
+    "Silk Caramel": {"mood": "Warm & Effortless", "occasion": "Brunch & Daytime"},
+    "Satin Taupe": {"mood": "Professional & Calming", "occasion": "Office Wear"},
+    "Peach Cashmere": {"mood": "Soft & Cozy", "occasion": "Casual Outing"},
+    "Nude Quartz": {"mood": "Minimalist & Pure", "occasion": "Daily Wear"},
+    "Almond Silk": {"mood": "Toasted & Modern", "occasion": "Business Meeting"},
+    
+    # Pinks
+    "Blush Quartz": {"mood": "Romantic & Elegant", "occasion": "Date Night"},
+    "Rose Opal": {"mood": "Playful & Vibrant", "occasion": "Weekend Getaway"},
+    "Fuchsia Neon": {"mood": "Electric & Eccentric", "occasion": "Music Festival"},
+    "Petal Glow": {"mood": "Fresh & Radiant", "occasion": "Spring Wedding"},
+    "Pink Sapphire": {"mood": "Luminous & Glamorous", "occasion": "Birthday Celebration"},
+    
+    # Berries
+    "Plum Crystal": {"mood": "Chic & Intellectual", "occasion": "Art Gallery Opening"},
+    "Mulberry Silk": {"mood": "Graceful & Warm", "occasion": "Afternoon Tea"},
+    "Royal Berry": {"mood": "Majestic & Powerful", "occasion": "VIP Reception"},
+    "Blackberry Muse": {"mood": "Vampy & Artistic", "occasion": "Fashion Show"},
+    "Velvet Mulberry": {"mood": "Smooth & Rich", "occasion": "Theatre & Opera"},
+    
+    # Corals
+    "Sunset Coral": {"mood": "Sun-kissed & Energetic", "occasion": "Beach Party"},
+    "Amber Nude": {"mood": "Earthy & Centered", "occasion": "Sunset Cruise"},
+    "Sienna Glow": {"mood": "Terracotta & Warm", "occasion": "Autumn Festival"},
+    "Coral Bloom": {"mood": "Bright & Cheerful", "occasion": "Summer Picnic"},
+    "Peach Sunrise": {"mood": "Vibrant & Hopeful", "occasion": "Morning Brunch"},
+    
+    # Plums
+    "Deep Amethyst": {"mood": "Glamorous", "occasion": "Party & Fashion Events"},
+    "Velvet Orchid": {"mood": "Sensual & Bold", "occasion": "Late Night Lounge"},
+    "Dark Dahlia": {"mood": "Dramatic & Dark", "occasion": "Gothic Event"},
+    "Midnight Plum": {"mood": "Mysterious & Sleek", "occasion": "VIP Afterparty"},
+    "Violet Eclipse": {"mood": "Cosmic & Avant-garde", "occasion": "Creative Showcase"}
+}
+
+LIP_LINER_MAPPING = {
+    # Reds
+    "Ruby Aura": {"color": ( 15,  10, 140), "name": "Crimson Define"},
+    "Crimson Lith": {"color": ( 10,   5,  90), "name": "Midnight Crimson"},
+    "Velvet Wine": {"color": ( 10,   5,  90), "name": "Midnight Crimson"},
+    "Scarlet Ember": {"color": ( 15,  10, 140), "name": "Crimson Define"},
+    "Rose Garnet": {"color": ( 20,  20, 170), "name": "Garnet Rim"},
+    
+    # Nudes
+    "Silk Caramel": {"color": ( 30,  50, 120), "name": "Toasted Caramel"},
+    "Satin Taupe": {"color": (110, 135, 190), "name": "Taupe Border"},
+    "Peach Cashmere": {"color": (110, 135, 190), "name": "Taupe Border"},
+    "Nude Quartz": {"color": (110, 135, 190), "name": "Taupe Border"},
+    "Almond Silk": {"color": ( 30,  50, 120), "name": "Toasted Caramel"},
+    
+    # Pinks
+    "Blush Quartz": {"color": (120,  80, 210), "name": "Rose Edge"},
+    "Rose Opal": {"color": (120,  80, 210), "name": "Rose Edge"},
+    "Fuchsia Neon": {"color": (160,  60, 235), "name": "Fuchsia Contour"},
+    "Petal Glow": {"color": (120,  80, 210), "name": "Rose Edge"},
+    "Pink Sapphire": {"color": (160,  60, 235), "name": "Fuchsia Contour"},
+    
+    # Berries
+    "Plum Crystal": {"color": ( 60,   8, 108), "name": "Berry Contour"},
+    "Mulberry Silk": {"color": ( 60,   8, 108), "name": "Berry Contour"},
+    "Royal Berry": {"color": ( 55,  10,  95), "name": "Blackberry Contour"},
+    "Blackberry Muse": {"color": ( 30,   5,  60), "name": "Dark Dahlia Rim"},
+    "Velvet Mulberry": {"color": ( 60,   8, 108), "name": "Berry Contour"},
+    
+    # Corals
+    "Sunset Coral": {"color": ( 35,  65, 175), "name": "Terracotta Line"},
+    "Amber Nude": {"color": ( 35,  65, 175), "name": "Terracotta Line"},
+    "Sienna Glow": {"color": ( 30,   5,  60), "name": "Dark Sienna"},
+    "Coral Bloom": {"color": ( 35,  65, 175), "name": "Terracotta Line"},
+    "Peach Sunrise": {"color": ( 35,  65, 175), "name": "Terracotta Line"},
+    
+    # Plums
+    "Deep Amethyst": {"color": ( 30,   5,  60), "name": "Amethyst Rim"},
+    "Velvet Orchid": {"color": ( 50,  10,  90), "name": "Orchid Border"},
+    "Dark Dahlia": {"color": ( 20,   0,  40), "name": "Midnight Dahlia"},
+    "Midnight Plum": {"color": ( 20,   0,  40), "name": "Midnight Dahlia"},
+    "Violet Eclipse": {"color": ( 50,  10,  90), "name": "Orchid Border"}
+}
+
 for pal, shades in lipstick_palettes.items():
     for shade_name, bgr in shades.items():
-        ALL_SHADES[shade_name] = {"palette": pal, "bgr": bgr}
+        meta = SHADE_METADATA.get(shade_name, {"mood": "Mysterious", "occasion": "Special Occasion"})
+        ALL_SHADES[shade_name] = {
+            "palette": pal,
+            "bgr": bgr,
+            "mood": meta["mood"],
+            "occasion": meta["occasion"]
+        }
 
+def get_match_score(shade_name, skin_tone, finish):
+    h_val = int(hashlib.md5(f"{shade_name}_{skin_tone or 'Medium'}_{finish}".encode()).hexdigest(), 16)
+    
+    # 1. Skin Tone Compatibility (60%)
+    if not skin_tone:
+        skin_comp = 85
+    else:
+        recs = SKIN_TONE_RECOMMENDATIONS.get(skin_tone, [])
+        if shade_name in recs:
+            skin_comp = 90 + (h_val % 10)
+        else:
+            skin_comp = 60 + (h_val % 25)
+            
+    # 2. Collection Compatibility (20%)
+    palette = ALL_SHADES.get(shade_name, {}).get("palette", "")
+    coll_mapping = {
+        "💋 Aura Rouge Collection": ["Medium", "Olive", "Tan", "Deep"],
+        "🌿 Quartz Nude Series": ["Fair", "Light", "Medium", "Olive"],
+        "🌸 Pink Aura Collection": ["Fair", "Light", "Medium"],
+        "🍇 Berry Luxe Collection": ["Olive", "Tan", "Deep", "Medium"],
+        "🌊 Coral Glow Collection": ["Light", "Medium", "Olive", "Tan"],
+        "🔮 Velvet Plum Edition": ["Tan", "Deep", "Olive"]
+    }
+    
+    if not skin_tone:
+        coll_comp = 85
+    else:
+        compatible_tones = coll_mapping.get(palette, [])
+        if skin_tone in compatible_tones:
+            coll_comp = 90 + (h_val % 11)
+        else:
+            coll_comp = 70 + (h_val % 11)
+            
+    # 3. Finish Compatibility (20%)
+    is_red_berry_plum = palette in ["💋 Aura Rouge Collection", "🍇 Berry Luxe Collection", "🔮 Velvet Plum Edition"]
+    is_pink_coral_nude = palette in ["🌿 Quartz Nude Series", "🌸 Pink Aura Collection", "🌊 Coral Glow Collection"]
+    
+    if "Velvet" in finish:
+        finish_comp = 95 if is_red_berry_plum else 65
+    elif "Glass" in finish:
+        finish_comp = 95 if is_pink_coral_nude else 65
+    elif "Glossy" in finish:
+        finish_comp = 88
+    elif "Satin" in finish:
+        finish_comp = 86
+    else:
+        finish_comp = 84
+        
+    total_score = int(skin_comp * 0.60 + coll_comp * 0.20 + finish_comp * 0.20)
+    total_score = max(50, min(100, total_score))
+    
+    if total_score >= 90:
+        cat = "Exceptional Harmony"
+    elif total_score >= 80:
+        cat = "Luxury Harmony"
+    elif total_score >= 70:
+        cat = "Beautiful Harmony"
+    elif total_score >= 60:
+        cat = "Good Harmony"
+    else:
+        cat = "Experimental Harmony"
+        
+    return total_score, cat
+
+def get_beauty_score_and_harmony(match_score, shade_name, undertone):
+    if not undertone:
+        b_score = match_score
+    else:
+        palette = ALL_SHADES.get(shade_name, {}).get("palette", "")
+        is_cool = palette in ["🌸 Pink Aura Collection", "🍇 Berry Luxe Collection", "🔮 Velvet Plum Edition"]
+        is_warm = palette in ["🌿 Quartz Nude Series", "🌊 Coral Glow Collection"]
+        
+        if undertone == "Cool":
+            modifier = 4 if is_cool else (-3 if is_warm else 0)
+        elif undertone == "Warm":
+            modifier = 4 if is_warm else (-3 if is_cool else 0)
+        else:  # Neutral
+            modifier = 2
+            
+        b_score = int(match_score + modifier)
+        
+    b_score = max(50, min(100, b_score))
+    
+    if b_score >= 90:
+        harmony = "Exceptional Harmony"
+        rec_level = "Exceptional Match"
+    elif b_score >= 80:
+        harmony = "Luxury Harmony"
+        rec_level = "Luxury Match"
+    elif b_score >= 70:
+        harmony = "Beautiful Harmony"
+        rec_level = "Beautiful Fit"
+    elif b_score >= 60:
+        harmony = "Good Harmony"
+        rec_level = "Good Match"
+    else:
+        harmony = "Experimental Harmony"
+        rec_level = "Experimental Style"
+        
+    return b_score, harmony, rec_level
 
 # =========================
 # SKIN TONE DETECTION
@@ -648,19 +942,31 @@ def detect_skin_tone(image_bgr, landmarks, h, w):
             if patch.size > 0:
                 samples.append(patch.reshape(-1, 3))
     if not samples:
-        return None, None
+        return None, None, None
     all_pixels = np.vstack(samples).astype(np.float32)
     avg_bgr = all_pixels.mean(axis=0)
     avg_bgr_u8 = np.array([[avg_bgr]], dtype=np.uint8)
     avg_lab = cv2.cvtColor(avg_bgr_u8, cv2.COLOR_BGR2LAB)[0][0]
     L_norm = avg_lab[0] / 255.0 * 100.0
+    a_val = avg_lab[1]
+    b_val = avg_lab[2]
+    
     if   L_norm >= 72: tone = "Fair"
     elif L_norm >= 62: tone = "Light"
     elif L_norm >= 52: tone = "Medium"
     elif L_norm >= 42: tone = "Olive"
     elif L_norm >= 32: tone = "Tan"
     else:              tone = "Deep"
-    return tone, tuple(int(c) for c in avg_bgr)
+    
+    ratio = (b_val / a_val) if a_val > 0 else 1.0
+    if ratio > 1.22:
+        undertone = "Warm"
+    elif ratio < 0.95:
+        undertone = "Cool"
+    else:
+        undertone = "Neutral"
+        
+    return tone, tuple(int(c) for c in avg_bgr), undertone
 
 # =========================
 # LIP MASK
@@ -670,7 +976,7 @@ def get_lip_mask_and_landmarks(image_bgr):
     rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     result = face_mesh.process(rgb)
     if not result.multi_face_landmarks:
-        return None, None, None, h, w
+        return None, None, None, None, h, w
 
     lm = result.multi_face_landmarks[0].landmark
 
@@ -692,7 +998,12 @@ def get_lip_mask_and_landmarks(image_bgr):
     cv2.fillPoly(upper_mask, [pts(UPPER_LIP_OUTER)], 255)
     upper_mask = cv2.bitwise_and(upper_mask, mask)
 
-    return mask, upper_mask, lm, h, w
+    # Lower lip sub-mask for gloss
+    lower_mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillPoly(lower_mask, [pts(LOWER_LIP_OUTER)], 255)
+    lower_mask = cv2.bitwise_and(lower_mask, mask)
+
+    return mask, upper_mask, lower_mask, lm, h, w
 
 # =========================
 # APPLY LIPSTICK — LAB color transfer (no hue wrap-around issue)
@@ -700,18 +1011,34 @@ def get_lip_mask_and_landmarks(image_bgr):
 def apply_lipstick(image_bgr: np.ndarray,
                    lip_mask: np.ndarray,
                    upper_lip_mask,
+                   lower_lip_mask,
                    color_bgr: tuple,
                    alpha: float,
-                   finish: str = "Glossy 💋") -> np.ndarray:
+                   finish: str = "Glossy 💋",
+                   volume_enhancement: str = "Natural",
+                   liner_mode: str = "None",
+                   liner_color_bgr: tuple = None) -> np.ndarray:
     """
-    LAB-space 'Color' blend mode  (same as Photoshop Color layer):
-      - a* and b* channels carry the hue + saturation → replaced by target color
-      - L* (lightness) kept from original → preserves lip texture, wrinkles, sheen
-    This works correctly for ALL colors (reds, pinks, nudes, dark berries).
-    No HSV hue wrap-around problem.
+    LAB-space 'Color' blend mode + Lip Shape Enhancement + Lip Liner.
     """
     h, w = image_bgr.shape[:2]
     img_f = image_bgr.astype(np.float32)
+
+    # ── 0. Optional Lip Shape Volume Enhancement ──────────────────────
+    if volume_enhancement == "Soft Volume":
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        lip_mask = cv2.dilate(lip_mask, kernel)
+        if upper_lip_mask is not None:
+            upper_lip_mask = cv2.dilate(upper_lip_mask, kernel)
+        if lower_lip_mask is not None:
+            lower_lip_mask = cv2.dilate(lower_lip_mask, kernel)
+    elif volume_enhancement == "Editorial Volume":
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        lip_mask = cv2.dilate(lip_mask, kernel)
+        if upper_lip_mask is not None:
+            upper_lip_mask = cv2.dilate(upper_lip_mask, kernel)
+        if lower_lip_mask is not None:
+            lower_lip_mask = cv2.dilate(lower_lip_mask, kernel)
 
     # ── 1. Hard binary guard — nothing leaks outside ──────────────────
     hard_mask = (lip_mask > 0).astype(np.float32)
@@ -741,12 +1068,25 @@ def apply_lipstick(image_bgr: np.ndarray,
     result_lab[..., 1] = img_lab[..., 1] * (1 - w_map) + tgt_a * w_map
     # b* channel (blue↔yellow axis) — fully replaced by target
     result_lab[..., 2] = img_lab[..., 2] * (1 - w_map) + tgt_b * w_map
-    # L* (lightness/texture) — keep ~75% original; nudge toward target for dark shades
-    l_shift = w_map * 0.28
-    result_lab[..., 0] = np.clip(
-        img_lab[..., 0] * (1 - l_shift) + tgt_L * l_shift,
-        0, 255,
-    )
+
+    # L* (lightness/texture)
+    if "Velvet" in finish:
+        # Soften texture on the L channel for soft-focus velvet look
+        blurred_L = cv2.GaussianBlur(img_lab[..., 0], (5, 5), 1.5)
+        smooth_L = img_lab[..., 0] * 0.40 + blurred_L * 0.60
+        # Mute reflections slightly
+        l_shift = w_map * 0.24
+        result_lab[..., 0] = np.clip(
+            smooth_L * (1 - l_shift) + tgt_L * l_shift,
+            0, 255,
+        )
+    else:
+        # Standard texture preservation with standard shift
+        l_shift = w_map * 0.28
+        result_lab[..., 0] = np.clip(
+            img_lab[..., 0] * (1 - l_shift) + tgt_L * l_shift,
+            0, 255,
+        )
 
     # ── 6. Back to BGR ────────────────────────────────────────────────
     result_lab_u8 = np.clip(result_lab, 0, 255).astype(np.uint8)
@@ -756,39 +1096,133 @@ def apply_lipstick(image_bgr: np.ndarray,
     blended = img_f * (1 - hard_3d) + blended * hard_3d
     blended = np.clip(blended, 0, 255)
 
-    # ── 8. Gloss highlight on upper lip (skip for Matte) ──────────────
-    if finish != "Matte 💄" and upper_lip_mask is not None and upper_lip_mask.any():
-        up_hard    = (upper_lip_mask > 0).astype(np.float32)
-        up_hard_3d = np.dstack([up_hard] * 3)
+    # ── 8. Gloss highlight on lips (skip for Matte and Velvet) ──────────
+    if finish not in ["Matte 💄", "Velvet Finish 🪄"] and (upper_lip_mask is not None and upper_lip_mask.any()):
+        # Gloss intensity and spread parameters
+        if finish == "Glass Finish 💎":
+            gloss_strength = 0.20
+            screen_factor = 0.25
+            size_multiplier = 2.5  # wide reflection
+            apply_lower = True
+        elif finish == "Glossy 💋":
+            gloss_strength = 0.12
+            screen_factor = 0.15
+            size_multiplier = 3.5  # very wide reflection
+            apply_lower = True
+        else:  # Satin ✨
+            gloss_strength = 0.06
+            screen_factor = 0.10
+            size_multiplier = 5.0  # extremely wide and soft reflection
+            apply_lower = False
 
-        rows = np.where(upper_lip_mask.any(axis=1))[0]
-        if len(rows) >= 2:
-            y_top    = rows[0]
-            y_bot    = rows[-1]
-            centre_y = y_top + (y_bot - y_top) * 0.28
-            sigma    = max(1.0, (y_bot - y_top) * 0.13)
-            y_idx    = np.arange(h, dtype=np.float32)
-            hs_1d    = np.clip(np.exp(-0.5 * ((y_idx - centre_y) / sigma) ** 2), 0, 1)
-            hs_3d    = np.dstack([np.outer(hs_1d, np.ones(w, np.float32))] * 3)
-        else:
-            hs_3d = np.ones_like(blended, dtype=np.float32)
+        # Highlight map for upper lip
+        hs_upper = np.zeros_like(blended, dtype=np.float32)
+        if upper_lip_mask is not None and upper_lip_mask.any():
+            up_hard = (upper_lip_mask > 0).astype(np.float32)
+            up_hard_3d = np.dstack([up_hard] * 3)
+            
+            # Find center using moments
+            M = cv2.moments(upper_lip_mask)
+            if M["m00"] != 0:
+                cX = M["m10"] / M["m00"]
+                cY = M["m01"] / M["m00"]
+                x_box, y_box, w_box, h_box = cv2.boundingRect(upper_lip_mask)
+                
+                # Offset slightly upwards for Cupid's bow highlight
+                cY = cY - h_box * 0.1
+                
+                # Determine standard deviations for soft 2D gradient
+                sigma_x = max(1.0, w_box * 0.12 * size_multiplier)
+                sigma_y = max(1.0, h_box * 0.25 * size_multiplier)
+                
+                y_idx = np.arange(h, dtype=np.float32).reshape(-1, 1)
+                x_idx = np.arange(w, dtype=np.float32).reshape(1, -1)
+                
+                hs_2d = np.exp(-0.5 * (((y_idx - cY) / sigma_y) ** 2 + ((x_idx - cX) / sigma_x) ** 2))
+                hs_3d = np.dstack([hs_2d] * 3)
+                hs_upper = up_hard_3d * hs_3d
 
-        gloss_strength = 0.45 if finish == "Glossy 💋" else 0.25
-        A_n         = blended / 255.0
-        screened    = np.clip((1 - (1 - A_n) * (1 - 0.30)) * 255.0, 0, 255)
-        gloss_w     = up_hard_3d * hs_3d * alpha * gloss_strength
+        # Highlight map for lower lip (if applicable)
+        hs_lower = np.zeros_like(blended, dtype=np.float32)
+        if apply_lower and lower_lip_mask is not None and lower_lip_mask.any():
+            lo_hard = (lower_lip_mask > 0).astype(np.float32)
+            lo_hard_3d = np.dstack([lo_hard] * 3)
+            
+            # Find center using moments
+            M = cv2.moments(lower_lip_mask)
+            if M["m00"] != 0:
+                cX = M["m10"] / M["m00"]
+                cY = M["m01"] / M["m00"]
+                x_box, y_box, w_box, h_box = cv2.boundingRect(lower_lip_mask)
+                
+                # Offset slightly downwards for center-lower lip highlight
+                cY = cY + h_box * 0.05
+                
+                # Determine standard deviations for soft 2D gradient
+                sigma_x = max(1.0, w_box * 0.10 * size_multiplier)
+                sigma_y = max(1.0, h_box * 0.30 * size_multiplier)
+                
+                y_idx = np.arange(h, dtype=np.float32).reshape(-1, 1)
+                x_idx = np.arange(w, dtype=np.float32).reshape(1, -1)
+                
+                hs_2d = np.exp(-0.5 * (((y_idx - cY) / sigma_y) ** 2 + ((x_idx - cX) / sigma_x) ** 2))
+                hs_3d = np.dstack([hs_2d] * 3)
+                hs_lower = lo_hard_3d * hs_3d
 
-        # Save the fully-colored result (both lips) before adding gloss
-        colored_both_lips = blended.copy()
+        # Combined highlight map
+        hs_combined = np.clip(hs_upper + hs_lower, 0, 1)
+
+        # Screen blend mode
+        A_n = blended / 255.0
+        screened = np.clip((1 - (1 - A_n) * (1 - screen_factor)) * 255.0, 0, 255)
+        gloss_w = hs_combined * alpha * gloss_strength
+
+        # Apply gloss blend specifically to the lip area
         blended_with_gloss = np.clip(blended * (1 - gloss_w) + screened * gloss_w, 0, 255)
 
-        # ✅ FIX: blend gloss ONLY onto upper lip pixels;
-        #    lower lip keeps its colored result (not reset to img_f)
-        blended = colored_both_lips * (1 - up_hard_3d) + blended_with_gloss * up_hard_3d
-
-        # Restore pixels that are truly OUTSIDE the full lip boundary to original
-        blended = img_f * (1 - hard_3d) + blended * hard_3d
+        # Blend gloss ONLY onto lip pixels (using the hard mask of the lips)
+        blended = blended * (1 - hard_3d) + blended_with_gloss * hard_3d
         blended = np.clip(blended, 0, 255)
+
+    # ── 9. Smart Lip Liner Simulation ───────────────────────────────
+    if liner_mode != "None" and liner_color_bgr is not None:
+        contours, _ = cv2.findContours(lip_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if len(contours) > 0:
+            if liner_mode == "Natural Define":
+                thickness = 2
+                blur_k = 3
+                liner_alpha = 0.65
+            elif liner_mode == "Soft Volume":
+                thickness = 3
+                blur_k = 5
+                liner_alpha = 0.75
+            elif liner_mode == "Precision Luxe":
+                thickness = 2
+                blur_k = 1
+                liner_alpha = 0.85
+            elif liner_mode == "Dramatic Glam":
+                thickness = 4
+                blur_k = 5
+                liner_alpha = 0.90
+            else:
+                thickness = 0
+                blur_k = 0
+                liner_alpha = 0.0
+
+            if thickness > 0:
+                liner_overlay = np.zeros((h, w, 3), dtype=np.uint8)
+                cv2.drawContours(liner_overlay, contours, -1, liner_color_bgr, thickness)
+                if blur_k > 1:
+                    liner_overlay = cv2.GaussianBlur(liner_overlay, (blur_k, blur_k), 0)
+                
+                liner_gray = cv2.cvtColor(liner_overlay, cv2.COLOR_BGR2GRAY)
+                _, l_mask = cv2.threshold(liner_gray, 1, 255, cv2.THRESH_BINARY)
+                
+                liner_mask_f = (l_mask / 255.0) * liner_alpha
+                liner_mask_3d = np.dstack([liner_mask_f] * 3)
+                
+                blended = (blended * (1 - liner_mask_3d) + liner_overlay * liner_mask_3d)
+                blended = np.clip(blended, 0, 255)
 
     return blended.astype(np.uint8)
 
@@ -830,7 +1264,7 @@ def pil_to_b64(img):
     return base64.b64encode(buffered.getvalue()).decode()
 
 # Responsive Swipe Slider HTML generator
-def render_before_after_slider(before_bgr, after_bgr, split_pos):
+def render_transformation_studio(before_bgr, after_bgr):
     before_rgb = cv2.cvtColor(before_bgr, cv2.COLOR_BGR2RGB)
     after_rgb = cv2.cvtColor(after_bgr, cv2.COLOR_BGR2RGB)
     before_pil = Image.fromarray(before_rgb)
@@ -840,59 +1274,557 @@ def render_before_after_slider(before_bgr, after_bgr, split_pos):
     after_b64 = pil_to_b64(after_pil)
     
     html_code = f"""
-    <div style="position: relative; width: 100%; max-width: 480px; margin: 0 auto; aspect-ratio: 4/5; overflow: hidden; border-radius: 16px; border: 2px solid #d4a373; box-shadow: 0 10px 30px rgba(43, 16, 32, 0.15);">
-        <!-- AFTER Image -->
-        <img src="data:image/jpeg;base64,{after_b64}" style="position: absolute; left:0; top:0; width: 100%; height: 100%; object-fit: cover;" />
-        
-        <!-- BEFORE Image (clipped from right using pure responsive CSS clip-path) -->
-        <img src="data:image/jpeg;base64,{before_b64}" style="position: absolute; left:0; top:0; width: 100%; height: 100%; object-fit: cover; clip-path: inset(0 {100 - split_pos}% 0 0);" />
-        
-        <!-- Split line indicator -->
-        <div style="position: absolute; left: {split_pos}%; top: 0; bottom: 0; width: 2px; background-color: #fc2779; box-shadow: 0 0 10px #fc2779; pointer-events: none; z-index: 10;">
-            <!-- Slider Handle knob -->
-            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 24px; height: 24px; border-radius: 50%; background: #ffffff; border: 2px solid #fc2779; box-shadow: 0 2px 6px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
-                <span style="font-size: 8px; color: #fc2779; font-weight: bold;">↔</span>
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+    body {{
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: transparent;
+        font-family: 'Montserrat', sans-serif;
+    }}
+    #studio-wrapper {{
+        position: relative;
+        width: 100%;
+        max-width: 480px;
+        margin: 0 auto;
+        aspect-ratio: 4/5;
+        border-radius: 16px;
+        border: 2px solid #d4a373;
+        box-shadow: 0 10px 30px rgba(43, 16, 32, 0.15);
+        overflow: hidden;
+        background-color: #0b060c;
+    }}
+    .viewport {{
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        cursor: grab;
+    }}
+    .viewport:active {{
+        cursor: grabbing;
+    }}
+    .zoom-container {{
+        width: 100%;
+        height: 100%;
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform-origin: center center;
+        transition: transform 0.05s ease-out;
+    }}
+    .image-wrapper {{
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+    }}
+    .after-img {{
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        pointer-events: none;
+    }}
+    .before-img-wrapper {{
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        clip-path: inset(0 50% 0 0);
+    }}
+    .before-img {{
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        pointer-events: none;
+    }}
+    .slider-bar {{
+        position: absolute;
+        left: 50%;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background-color: #fc2779;
+        box-shadow: 0 0 10px #fc2779;
+        cursor: col-resize;
+        z-index: 10;
+    }}
+    .slider-handle {{
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #fc2779;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: col-resize;
+        transition: transform 0.2s;
+    }}
+    .slider-handle:hover {{
+        transform: translate(-50%, -50%) scale(1.1);
+    }}
+    .handle-arrow {{
+        font-size: 12px;
+        color: #fc2779;
+        font-weight: bold;
+        user-select: none;
+    }}
+    .badge {{
+        position: absolute;
+        top: 15px;
+        background: rgba(43, 16, 32, 0.75);
+        color: #ffffff;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        border: 1px solid #d4a373;
+        z-index: 11;
+        pointer-events: none;
+    }}
+    .badge-before {{
+        left: 15px;
+    }}
+    .badge-after {{
+        right: 15px;
+        background: rgba(252, 39, 121, 0.85);
+        color: #ffffff;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        border: 1px solid #ffffff;
+        z-index: 11;
+        pointer-events: none;
+    }}
+    .toolbar {{
+        position: absolute;
+        bottom: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(18, 9, 16, 0.88);
+        border: 1.5px solid #d4a373;
+        border-radius: 20px;
+        padding: 8px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        z-index: 12;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        align-items: center;
+        width: 250px;
+    }}
+    .view-mode-bar {{
+        display: flex;
+        justify-content: center;
+        gap: 5px;
+        width: 100%;
+        border-bottom: 1px solid rgba(212, 163, 115, 0.2);
+        padding-bottom: 6px;
+    }}
+    .mode-btn {{
+        background: transparent;
+        border: 1px solid rgba(212, 163, 115, 0.25);
+        color: #8b8b9c;
+        font-size: 9px;
+        font-weight: 700;
+        padding: 4px 8px;
+        border-radius: 10px;
+        cursor: pointer;
+        text-transform: uppercase;
+        transition: all 0.2s;
+    }}
+    .mode-btn.active {{
+        background: #fc2779;
+        color: #ffffff;
+        border-color: #fc2779;
+    }}
+    .tool-btn {{
+        background: transparent;
+        border: none;
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+    }}
+    .tool-btn:hover {{
+        color: #fc2779;
+        background: rgba(255, 255, 255, 0.1);
+    }}
+    .zoom-text {{
+        color: #d4a373;
+        font-size: 11px;
+        font-weight: 700;
+        min-width: 32px;
+        text-align: center;
+    }}
+    .sbs-view {{
+        display: none;
+        width: 100%;
+        height: 100%;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }}
+    .sbs-pane {{
+        flex: 1;
+        height: 100%;
+        position: relative;
+        overflow: hidden;
+    }}
+    .sbs-pane img {{
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }}
+    </style>
+    </head>
+    <body>
+    <div id="studio-wrapper">
+        <div class="viewport" id="viewport">
+            <!-- Side by Side View container -->
+            <div class="sbs-view" id="sbs-view">
+                <div class="sbs-pane" style="border-right: 1.5px solid #d4a373;">
+                    <img src="data:image/jpeg;base64,{before_b64}" />
+                    <span class="badge badge-before">BEFORE</span>
+                </div>
+                <div class="sbs-pane">
+                    <img src="data:image/jpeg;base64,{after_b64}" />
+                    <span class="badge badge-after">AURALITH</span>
+                </div>
+            </div>
+
+            <!-- Single Zoom / Pan / Split View container -->
+            <div class="zoom-container" id="zoom-container">
+                <div class="image-wrapper">
+                    <img class="after-img" src="data:image/jpeg;base64,{after_b64}" />
+                </div>
+                <div class="before-img-wrapper" id="before-wrapper">
+                    <img class="before-img" src="data:image/jpeg;base64,{before_b64}" />
+                </div>
+            </div>
+            
+            <div class="slider-bar" id="slider-bar">
+                <div class="slider-handle">
+                    <span class="handle-arrow">↔</span>
+                </div>
+            </div>
+            
+            <span class="badge badge-before" id="badge-before-label">BEFORE</span>
+            <span class="badge badge-after" id="badge-after-label">AURALITH ART</span>
+            
+            <div class="toolbar">
+                <div class="view-mode-bar">
+                    <button class="mode-btn active" id="btn-mode-split" onclick="setMode('split')">Split</button>
+                    <button class="mode-btn" id="btn-mode-orig" onclick="setMode('orig')">Original</button>
+                    <button class="mode-btn" id="btn-mode-enh" onclick="setMode('enh')">Enhanced</button>
+                    <button class="mode-btn" id="btn-mode-sbs" onclick="setMode('sbs')">Side-by-Side</button>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center; justify-content: center; width: 100%;">
+                    <button class="tool-btn" id="btn-zoom-out" title="Zoom Out">-</button>
+                    <span class="zoom-text" id="zoom-val">1.0x</span>
+                    <button class="tool-btn" id="btn-zoom-in" title="Zoom In">+</button>
+                    <button class="tool-btn" id="btn-reset" title="Reset View">↺</button>
+                    <button class="tool-btn" id="btn-fullscreen" title="Fullscreen">⛶</button>
+                </div>
             </div>
         </div>
-        
-        <!-- Labels -->
-        <span style="position: absolute; left: 15px; top: 15px; background: rgba(43, 16, 32, 0.75); color: #ffffff; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; border: 1px solid #d4a373; z-index: 11; pointer-events: none;">BEFORE</span>
-        <span style="position: absolute; right: 15px; top: 15px; background: rgba(252, 39, 121, 0.85); color: #ffffff; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; border: 1px solid #ffffff; z-index: 11; pointer-events: none;">AURALITH ART</span>
     </div>
+    
+    <script>
+    const viewport = document.getElementById('viewport');
+    const zoomContainer = document.getElementById('zoom-container');
+    const beforeWrapper = document.getElementById('before-wrapper');
+    const sliderBar = document.getElementById('slider-bar');
+    const zoomVal = document.getElementById('zoom-val');
+    const sbsView = document.getElementById('sbs-view');
+    const badgeBefore = document.getElementById('badge-before-label');
+    const badgeAfter = document.getElementById('badge-after-label');
+    
+    const btnZoomIn = document.getElementById('btn-zoom-in');
+    const btnZoomOut = document.getElementById('btn-zoom-out');
+    const btnReset = document.getElementById('btn-reset');
+    const btnFullscreen = document.getElementById('btn-fullscreen');
+    
+    let zoom = 1.0;
+    let panX = 0;
+    let panY = 0;
+    let splitPercent = 50;
+    let activeMode = 'split'; // split, orig, enh, sbs
+    
+    let isDraggingSplit = false;
+    let isPanning = false;
+    
+    let startX = 0;
+    let startY = 0;
+    let startPanX = 0;
+    let startPanY = 0;
+    
+    function updateTransforms() {{
+        // Update Zoom & Pan
+        zoomContainer.style.transform = `scale(${{zoom}}) translate(${{panX}}px, ${{panY}}px)`;
+        zoomVal.innerText = zoom.toFixed(1) + 'x';
+        
+        // Update Split Position
+        sliderBar.style.left = splitPercent + '%';
+        beforeWrapper.style.clipPath = `inset(0 ${{100 - splitPercent}}% 0 0)`;
+    }}
+    
+    function setMode(mode) {{
+        activeMode = mode;
+        
+        document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById('btn-mode-' + mode).classList.add('active');
+        
+        if (mode === 'sbs') {{
+            zoomContainer.style.display = 'none';
+            sliderBar.style.display = 'none';
+            badgeBefore.style.display = 'none';
+            badgeAfter.style.display = 'none';
+            sbsView.style.display = 'flex';
+        }} else {{
+            zoomContainer.style.display = 'block';
+            sbsView.style.display = 'none';
+            
+            if (mode === 'orig') {{
+                sliderBar.style.display = 'none';
+                badgeBefore.style.display = 'block';
+                badgeAfter.style.display = 'none';
+                beforeWrapper.style.clipPath = 'inset(0 0 0 0)';
+            }} else if (mode === 'enh') {{
+                sliderBar.style.display = 'none';
+                badgeBefore.style.display = 'none';
+                badgeAfter.style.display = 'block';
+                beforeWrapper.style.clipPath = 'inset(0 100% 0 0)';
+            }} else {{ // split
+                sliderBar.style.display = 'block';
+                badgeBefore.style.display = 'block';
+                badgeAfter.style.display = 'block';
+                beforeWrapper.style.clipPath = `inset(0 ${{100 - splitPercent}}% 0 0)`;
+            }}
+        }}
+    }}
+    
+    // Split dragging
+    function handleSplitMove(clientX) {{
+        if (activeMode !== 'split') return;
+        const rect = viewport.getBoundingClientRect();
+        const posX = clientX - rect.left;
+        let percent = (posX / rect.width) * 100;
+        percent = Math.max(0, Math.min(100, percent));
+        splitPercent = percent;
+        updateTransforms();
+    }}
+    
+    sliderBar.addEventListener('mousedown', (e) => {{
+        isDraggingSplit = true;
+        e.stopPropagation();
+        e.preventDefault();
+    }});
+    
+    // Panning
+    viewport.addEventListener('mousedown', (e) => {{
+        if (activeMode !== 'sbs' && zoom > 1.0) {{
+            isPanning = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startPanX = panX;
+            startPanY = panY;
+            e.preventDefault();
+        }}
+    }});
+    
+    window.addEventListener('mousemove', (e) => {{
+        if (isDraggingSplit) {{
+            handleSplitMove(e.clientX);
+        }} else if (isPanning) {{
+            const dx = (e.clientX - startX) / zoom;
+            const dy = (e.clientY - startY) / zoom;
+            panX = startPanX + dx;
+            panY = startPanY + dy;
+            
+            // Limit panning
+            const maxPan = 150 * (zoom - 1);
+            panX = Math.max(-maxPan, Math.min(maxPan, panX));
+            panY = Math.max(-maxPan, Math.min(maxPan, panY));
+            
+            updateTransforms();
+        }}
+    }});
+    
+    window.addEventListener('mouseup', () => {{
+        isDraggingSplit = false;
+        isPanning = false;
+    }});
+    
+    // Touch support
+    sliderBar.addEventListener('touchstart', (e) => {{
+        isDraggingSplit = true;
+        e.stopPropagation();
+    }});
+    
+    viewport.addEventListener('touchstart', (e) => {{
+        if (activeMode !== 'sbs' && zoom > 1.0 && e.touches.length === 1) {{
+            isPanning = true;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            startPanX = panX;
+            startPanY = panY;
+        }}
+    }});
+    
+    window.addEventListener('touchmove', (e) => {{
+        if (isDraggingSplit && e.touches.length > 0) {{
+            handleSplitMove(e.touches[0].clientX);
+        }} else if (isPanning && e.touches.length === 1) {{
+            const dx = (e.touches[0].clientX - startX) / zoom;
+            const dy = (e.touches[0].clientY - startY) / zoom;
+            panX = startPanX + dx;
+            panY = startPanY + dy;
+            
+            const maxPan = 150 * (zoom - 1);
+            panX = Math.max(-maxPan, Math.min(maxPan, panX));
+            panY = Math.max(-maxPan, Math.min(maxPan, panY));
+            
+            updateTransforms();
+        }}
+    }});
+    
+    window.addEventListener('touchend', () => {{
+        isDraggingSplit = false;
+        isPanning = false;
+    }});
+    
+    // Wheel Zoom
+    viewport.addEventListener('wheel', (e) => {{
+        if (activeMode === 'sbs') return;
+        e.preventDefault();
+        const zoomDelta = e.deltaY < 0 ? 0.25 : -0.25;
+        zoom = Math.max(1.0, Math.min(4.0, zoom + zoomDelta));
+        if (zoom === 1.0) {{
+            panX = 0;
+            panY = 0;
+        }}
+        updateTransforms();
+    }}, {{ passive: false }});
+    
+    // Toolbar buttons
+    btnZoomIn.addEventListener('click', (e) => {{
+        if (activeMode === 'sbs') return;
+        zoom = Math.min(4.0, zoom + 0.5);
+        updateTransforms();
+    }});
+    
+    btnZoomOut.addEventListener('click', (e) => {{
+        if (activeMode === 'sbs') return;
+        zoom = Math.max(1.0, zoom - 0.5);
+        if (zoom === 1.0) {{
+            panX = 0;
+            panY = 0;
+        }}
+        updateTransforms();
+    }});
+    
+    btnReset.addEventListener('click', (e) => {{
+        zoom = 1.0;
+        panX = 0;
+        panY = 0;
+        splitPercent = 50;
+        setMode('split');
+        updateTransforms();
+    }});
+    
+    btnFullscreen.addEventListener('click', (e) => {{
+        const elem = document.getElementById('studio-wrapper');
+        if (!document.fullscreenElement) {{
+            elem.requestFullscreen().catch(err => {{
+                console.log("Error attempting fullscreen: " + err.message);
+            }});
+        }} else {{
+            document.exitFullscreen();
+        }}
+    }});
+    
+    document.addEventListener('fullscreenchange', () => {{
+        const wrapper = document.getElementById('studio-wrapper');
+        if (document.fullscreenElement) {{
+            wrapper.style.maxWidth = 'none';
+            wrapper.style.aspectRatio = 'none';
+            wrapper.style.width = '100vw';
+            wrapper.style.height = '100vh';
+        }} else {{
+            wrapper.style.maxWidth = '480px';
+            wrapper.style.aspectRatio = '4/5';
+            wrapper.style.width = '100%';
+            wrapper.style.height = 'auto';
+        }}
+    }});
+    
+    updateTransforms();
+    </script>
+    </body>
+    </html>
     """
     return html_code
 
+
 # Deterministic shade match confidence score based on skin tone
 def get_match_confidence(shade_name, skin_tone):
-    if not skin_tone:
-        return 85
-    recs = SKIN_TONE_RECOMMENDATIONS.get(skin_tone, [])
-    val = int(hashlib.md5(f"{shade_name}_{skin_tone}".encode()).hexdigest(), 16)
-    if shade_name in recs:
-        return 90 + (val % 9)
-    else:
-        return 65 + (val % 25)
+    return get_match_score(shade_name, skin_tone, "Glossy 💋")[0]
 
 # Naming explanations & descriptions
 SHADE_DESCRIPTIONS = {
     "Ruby Aura": "A deep, classic ruby red that leaves a powerful, timeless impression.",
     "Crimson Lith": "A velvet-textured royal crimson for glamorous, confident evenings.",
     "Velvet Wine": "A rich, full-bodied dark wine red for bold, futuristic styling.",
+    "Scarlet Ember": "A fierce, glowing scarlet red that radiates warmth and modern luxury.",
+    "Rose Garnet": "A deep, rich garnet red with romantic rose undertones for evening elegance.",
     "Silk Caramel": "A warm, buttery nude caramel that melts seamlessly into the lips.",
     "Satin Taupe": "A sophisticated, neutral cool-toned beige with a satin glow.",
     "Peach Cashmere": "A soft, pastel peach-nude that feels like luxurious cashmere.",
+    "Nude Quartz": "A delicate, crystal-clear beige-nude with a whisper of soft rose quartz.",
+    "Almond Silk": "A warm, toasted almond nude that adds a natural velvet dimension.",
     "Blush Quartz": "A delicate, crystal-pink blush tone for a subtle daily radiance.",
     "Rose Opal": "A medium-rose pink with luminous crystalline highlights.",
     "Fuchsia Neon": "A high-intensity, electric fuchsia statement shade.",
+    "Petal Glow": "A soft, fresh-cut petal pink with luminous light-reflecting pigment.",
+    "Pink Sapphire": "A rich, precious pink sapphire gemstone shade that makes a striking impact.",
     "Plum Crystal": "A rich, crystal-infused medium plum for an elegant, elevated pop.",
     "Mulberry Silk": "A soft berry-toned silk finish with deep warm undertones.",
     "Royal Berry": "A majestic, dark berry hue that complements all skin tones.",
+    "Blackberry Muse": "A deep, dark blackberry pigment for an ultra-luxurious vampy look.",
+    "Velvet Mulberry": "A warm, luscious mulberry berry-pink designed for smooth sophistication.",
     "Sunset Coral": "A bright, sun-kissed coral pink that radiates pure warmth.",
     "Amber Nude": "A glowing, warm amber-nude with a subtle golden aura.",
     "Sienna Glow": "A deep, earthy terracotta red with sunset reflections.",
+    "Coral Bloom": "A fresh, radiant coral red that captures the energy of spring blossoms.",
+    "Peach Sunrise": "A bright, warm peachy pink that mimics the golden glow of a new dawn.",
     "Deep Amethyst": "A dark, intense purple-plum with amethyst crystal undertones.",
     "Velvet Orchid": "A vibrant, luxury magenta orchid that commands attention.",
-    "Dark Dahlia": "A mysterious, near-black velvet plum for dramatic appeal."
+    "Dark Dahlia": "A mysterious, near-black velvet plum for dramatic appeal.",
+    "Midnight Plum": "A mysterious, near-black plum that commands attention with dark depth.",
+    "Violet Eclipse": "A deep, royal violet plum inspired by cosmic shades and velvet textures."
 }
 
 # =========================
@@ -980,11 +1912,13 @@ def render_sidebar():
         
         st.divider()
         
-        # Navigation
+        # Navigation (5 Experiences V3.1)
         page = st.radio(
             "Navigate", 
-            ["✨ AURALITH Home", "💄 Virtual Try-On", "📸 Lookbook Dashboard"], 
-            index=["✨ AURALITH Home", "💄 Virtual Try-On", "📸 Lookbook Dashboard"].index(st.session_state.current_page), 
+            ["✨ AURALITH Home", "💄 Virtual Try-On Studio", "🎥 Live AI Beauty Studio", "📸 AURALITH Lookbook", "📱 Mobile Beauty Experience"], 
+            index=["✨ AURALITH Home", "💄 Virtual Try-On Studio", "🎥 Live AI Beauty Studio", "📸 AURALITH Lookbook", "📱 Mobile Beauty Experience"].index(
+                st.session_state.current_page if st.session_state.current_page in ["✨ AURALITH Home", "💄 Virtual Try-On Studio", "🎥 Live AI Beauty Studio", "📸 AURALITH Lookbook", "📱 Mobile Beauty Experience"] else "✨ AURALITH Home"
+            ), 
             label_visibility="collapsed"
         )
         st.session_state.current_page = page
@@ -1017,147 +1951,231 @@ def render_home_page():
         <h1 style="color: #ffffff !important; font-size: 3.2rem; font-weight: 800; letter-spacing: 4px; margin: 0 0 10px 0; text-shadow: 0 4px 10px rgba(0,0,0,0.2) !important;">A U R A L I T H</h1>
         <p style="font-size: 1.25rem; font-weight: 500; color: #f9f9fb; letter-spacing: 1.5px; margin-bottom: 25px;">Where Futuristic AI Meets Luxury Beauty</p>
         <p style="font-size: 0.95rem; line-height: 1.7; max-width: 750px; margin: 0 auto 30px auto; color: rgba(255,255,255,0.9); font-weight: 300;">
-            AURALITH was created to redefine digital beauty experiences through artificial intelligence, personalized shade discovery, and luxury cosmetic innovation. 
-            Upload your beauty canvas and experience your perfect shade.
+            AURALITH V3.1 represents the pinnacle of luxury beauty-tech. By fusing real-time facial intelligence with professional-grade cosmetic rendering, we deliver a highly personalized canvas mapping experience for digital shade discovery.
         </p>
     </div>
     """, unsafe_allow_html=True)
     
-    # CTA
-    _, col_cta_center, _ = st.columns([1, 2, 1])
-    with col_cta_center:
-        if st.button("Experience AI-Powered Lipstick Try-On ✦", use_container_width=True):
-            st.session_state.current_page = "💄 Virtual Try-On"
+    # CTA Buttons
+    cta_col1, cta_col2 = st.columns(2)
+    with cta_col1:
+        if st.button("🎥 Try Live AI Beauty Studio (Webcam) ✦", use_container_width=True):
+            st.session_state.current_page = "🎥 Live AI Beauty Studio"
+            st.rerun()
+    with cta_col2:
+        if st.button("💄 Try Virtual Try-On Studio (Photo Upload) ✦", use_container_width=True):
+            st.session_state.current_page = "💄 Virtual Try-On Studio"
             st.rerun()
             
     st.divider()
     
     # Feature Cards Showcase
-    st.markdown("<h2 style='text-align: center; margin-bottom: 30px; color:#2b1020;'>✦ The AURALITH Experience</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; margin-bottom: 30px; color:#2b1020;'>✦ The AURALITH V3.1 Suite</h2>", unsafe_allow_html=True)
     f_col1, f_col2, f_col3 = st.columns(3)
     with f_col1:
         st.markdown("""
         <div class="glass-card" style="height: 100%; border-top: 4px solid #fc2779 !important;">
-            <h4 style="margin-top:0; color:#fc2779 !important;">🔮 Virtual Try-On Studio</h4>
+            <h4 style="margin-top:0; color:#fc2779 !important;">🎥 Live Webcam Studio</h4>
             <p style="font-size: 13px; color:#555; line-height: 1.6; margin-bottom:0;">
-                Experience hyper-realistic lipstick rendering in real-time. Seamlessly toggle between Matte 💄, Satin ✨, and Glossy 💋 finishes with adaptive transparency overlays.
+                Test lipstick shades instantly through your webcam. Features continuous tracking and dynamic lipstick/liner overlays at 20-30 FPS.
             </p>
         </div>
         """, unsafe_allow_html=True)
     with f_col2:
         st.markdown("""
         <div class="glass-card" style="height: 100%; border-top: 4px solid #d4a373 !important;">
-            <h4 style="margin-top:0; color:#d4a373 !important;">📐 Intelligent Shade Discovery</h4>
+            <h4 style="margin-top:0; color:#d4a373 !important;">📐 Lip liner & Volume Enhancement</h4>
             <p style="font-size: 13px; color:#555; line-height: 1.6; margin-bottom:0;">
-                Our advanced computer vision models sample multi-zone complexion landmarks to detect your skin tone and match you with optimized luxury shades.
+                Simulate professional lip liners (Natural, Soft Volume, Precision, Dramatic) and non-destructive shape volume adjustments.
             </p>
         </div>
         """, unsafe_allow_html=True)
     with f_col3:
         st.markdown("""
         <div class="glass-card" style="height: 100%; border-top: 4px solid #2b1020 !important;">
-            <h4 style="margin-top:0; color:#2b1020 !important;">📸 Personalized Lookbook</h4>
+            <h4 style="margin-top:0; color:#2b1020 !important;">🔮 AI Beauty Score™</h4>
             <p style="font-size: 13px; color:#555; line-height: 1.6; margin-bottom:0;">
-                Curate your custom digital lookbook portfolio. Revisit previous beauty transformations, compare colors side-by-side, and manage your beauty collection.
+                Calculates compatibility using skin tone (60%), collection (20%), finish (20%), and undertone mapping for detailed harmony analytics.
             </p>
         </div>
         """, unsafe_allow_html=True)
 
+    # Beauty Journey Section
+    st.markdown("<h2 style='text-align: center; margin-top: 40px; margin-bottom: 25px; color:#2b1020;'>✨ Your AURALITH Beauty Journey</h2>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background: #ffffff; border-radius: 16px; border: 1.5px solid #e8e8f2; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.01); margin-bottom: 30px;">
+        <div style="display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; text-align: center; gap: 15px;">
+            <div style="flex: 1; min-width: 130px;">
+                <div style="font-size: 20px; margin-bottom: 8px;">1️⃣</div>
+                <div style="font-weight: 700; font-size: 12px; color: #2b1020; margin-bottom: 4px;">Upload Canvas</div>
+                <div style="font-size: 10px; color: #8b8b9c;">Upload portrait or start camera feed</div>
+            </div>
+            <div style="color: #d4a373; font-weight: 700; font-size: 16px;">→</div>
+            <div style="flex: 1; min-width: 130px;">
+                <div style="font-size: 20px; margin-bottom: 8px;">2️⃣</div>
+                <div style="font-weight: 700; font-size: 12px; color: #2b1020; margin-bottom: 4px;">AI Analysis</div>
+                <div style="font-size: 10px; color: #8b8b9c;">Detects complexion & undertones</div>
+            </div>
+            <div style="color: #d4a373; font-weight: 700; font-size: 16px;">→</div>
+            <div style="flex: 1; min-width: 130px;">
+                <div style="font-size: 20px; margin-bottom: 8px;">3️⃣</div>
+                <div style="font-weight: 700; font-size: 12px; color: #2b1020; margin-bottom: 4px;">Experience Shades</div>
+                <div style="font-size: 10px; color: #8b8b9c;">Try 30 shades and 5 finishes</div>
+            </div>
+            <div style="color: #d4a373; font-weight: 700; font-size: 16px;">→</div>
+            <div style="flex: 1; min-width: 130px;">
+                <div style="font-size: 20px; margin-bottom: 8px;">4️⃣</div>
+                <div style="font-weight: 700; font-size: 12px; color: #2b1020; margin-bottom: 4px;">Compare Views</div>
+                <div style="font-size: 10px; color: #8b8b9c;">Draggable slider, side-by-side, zoom</div>
+            </div>
+            <div style="color: #d4a373; font-weight: 700; font-size: 16px;">→</div>
+            <div style="flex: 1; min-width: 130px;">
+                <div style="font-size: 20px; margin-bottom: 8px;">5️⃣</div>
+                <div style="font-weight: 700; font-size: 12px; color: #2b1020; margin-bottom: 4px;">Save Looks</div>
+                <div style="font-size: 10px; color: #8b8b9c;">Save customized styles to lookbook</div>
+            </div>
+            <div style="color: #d4a373; font-weight: 700; font-size: 16px;">→</div>
+            <div style="flex: 1; min-width: 130px;">
+                <div style="font-size: 20px; margin-bottom: 8px;">6️⃣</div>
+                <div style="font-weight: 700; font-size: 12px; color: #2b1020; margin-bottom: 4px;">Build Profile</div>
+                <div style="font-size: 10px; color: #8b8b9c;">Access interactive analytics dashboard</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.divider()
     
-    # Signature Collections Catalog Showcase
-    st.markdown("<h2 style='text-align: center; margin-bottom: 5px; color:#2b1020;'>✦ Luxury Signature Collections</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color:#8b8b9c; font-size:13px; margin-bottom:30px;'>Interactive catalog. Click 'Try ✦' on any shade to load it instantly in the Studio.</p>", unsafe_allow_html=True)
+    # Homepage Beauty Discovery (5 tabs)
+    st.markdown("<h2 style='text-align: center; margin-bottom: 5px; color:#2b1020;'>✦ Discover Luxury Shades</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color:#8b8b9c; font-size:13px; margin-bottom:30px;'>Explore trending products and editorial recommendations. Try them instantly in the Studio.</p>", unsafe_allow_html=True)
     
-    # Grid of Collections
-    collections_data = [
-        {"name": "💋 Aura Rouge Collection", "key": "💋 Aura Rouge Collection", "desc": "Powerful, timeless classic reds designed to make an impact."},
-        {"name": "🌿 Quartz Nude Series", "key": "🌿 Quartz Nude Series", "desc": "Velvety butter-nude tones that blend seamlessly into the lips."},
-        {"name": "🌸 Pink Aura Collection", "key": "🌸 Pink Aura Collection", "desc": "Luminous crystalline pink shades reflecting fresh quartz energy."},
-        {"name": "🍇 Berry Luxe Collection", "key": "🍇 Berry Luxe Collection", "desc": "Deep, majestic, berry-infused silk pigments for absolute luxury."},
-        {"name": "🌊 Coral Glow Collection", "key": "🌊 Coral Glow Collection", "desc": "Sun-kissed, glowing orange-sienna pigments for a warm radiance."},
-        {"name": "🔮 Velvet Plum Edition", "key": "🔮 Velvet Plum Edition", "desc": "Mysterious, intense violet and amethyst tones for dramatic elegance."}
-    ]
+    last_skin_tone = "Medium"
+    for look in reversed(st.session_state.saved_looks):
+        if look.get("skin_tone") and look["skin_tone"] != "Not Detected":
+            last_skin_tone = look["skin_tone"]
+            break
+            
+    tab_trend, tab_editor, tab_rec, tab_new, tab_signature = st.tabs([
+        "🔥 Trending Shades", 
+        "✨ Editor's Choice", 
+        "💖 Recommended For You", 
+        "🌟 New Arrivals", 
+        "👑 AURALITH Signature Picks"
+    ])
     
-    for i in range(0, 6, 2):
-        col_left, col_right = st.columns(2)
-        for idx, col_box in enumerate([col_left, col_right]):
-            col_info = collections_data[i + idx]
-            palette_name = col_info["key"]
-            with col_box:
+    def render_shade_card_grid(shades_list, btn_key_prefix):
+        cols = st.columns(3)
+        for idx, ts in enumerate(shades_list):
+            if ts in ALL_SHADES:
+                palette = ALL_SHADES[ts]["palette"]
+                bgr = ALL_SHADES[ts]["bgr"]
+                r, g, b = bgr[2], bgr[1], bgr[0]
+                desc = SHADE_DESCRIPTIONS.get(ts, "")
+                score, _ = get_match_score(ts, last_skin_tone, "Glossy 💋")
+                b_score, harmony, _ = get_beauty_score_and_harmony(score, ts, "Neutral")
+                meta = SHADE_METADATA.get(ts, {"mood": "Mysterious", "occasion": "Special Occasion"})
+                
+                with cols[idx]:
+                    st.markdown(f"""
+                    <div class="glass-card" style="text-align: center; border-top: 4px solid #fc2779 !important; height: 320px; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div>
+                            <div style="width:36px; height:36px; border-radius:50%; background:rgb({r},{g},{b}); margin:0 auto 10px auto; border:2px solid #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.15);"></div>
+                            <h4 style="margin: 0 0 4px 0; font-size: 15px; color:#2b1020 !important;">{ts}</h4>
+                            <span style="font-size: 9px; color: #8b8b9c; text-transform: uppercase; font-weight: 700; display: block; margin-bottom: 6px;">{palette.replace(" Collection", "").replace(" Series", "").replace(" Edition", "")}</span>
+                            <p style="font-size:11px; color:#555; line-height:1.4; height: 48px; overflow: hidden; margin-bottom: 8px;">{desc}</p>
+                            <div style="font-size: 10px; color: #d4a373; font-weight: 700;">Mood: {meta['mood']}</div>
+                            <div style="font-size: 10px; color: #d4a373; font-weight: 700; margin-top:2px;">Occasion: {meta['occasion']}</div>
+                        </div>
+                        <div style="margin-top: 10px; font-size:11px; font-weight:700; color:#fc2779;">{b_score}% Score ({harmony})</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if st.button("Try shade ✦", key=f"{btn_key_prefix}_{ts}", use_container_width=True):
+                        st.session_state.selected_shade = ts
+                        st.session_state.selected_palette = palette
+                        st.session_state.current_page = "💄 Virtual Try-On Studio"
+                        st.rerun()
+
+    with tab_trend:
+        render_shade_card_grid(["Scarlet Ember", "Peach Sunrise", "Violet Eclipse"], "trend")
+    with tab_editor:
+        render_shade_card_grid(["Velvet Mulberry", "Almond Silk", "Pink Sapphire"], "editor")
+    with tab_rec:
+        recs = SKIN_TONE_RECOMMENDATIONS.get(last_skin_tone, ["Ruby Aura", "Peach Cashmere", "Plum Crystal"])[:3]
+        render_shade_card_grid(recs, "rec")
+    with tab_new:
+        render_shade_card_grid(["Rose Opal", "Sunset Coral", "Midnight Plum"], "new")
+    with tab_signature:
+        render_shade_card_grid(["Ruby Aura", "Silk Caramel", "Deep Amethyst"], "sig")
+
+    st.divider()
+
+    # Brand Catalog Showcase
+    st.markdown("<h2 style='text-align: center; margin-bottom: 30px; color:#2b1020;'>✦ Luxury Signature Collections</h2>", unsafe_allow_html=True)
+    for p_name, p_shades in lipstick_palettes.items():
+        st.markdown(f"#### {p_name}")
+        cols = st.columns(len(p_shades))
+        for s_idx, (s_name, bgr) in enumerate(p_shades.items()):
+            r, g, b = bgr[2], bgr[1], bgr[0]
+            with cols[s_idx]:
                 st.markdown(f"""
-                <div style="background: #ffffff; border-radius: 16px; border: 1.5px solid #e8e8f2; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.01);">
-                    <h3 style="margin-top:0; color:#2b1020 !important; font-size:16px; border-bottom: 2px solid #fc2779; display:inline-block; padding-bottom:4px;">{col_info["name"]}</h3>
-                    <p style="font-size:12px; color:#8b8b9c; margin: 10px 0 20px 0; height:32px; overflow:hidden;">{col_info["desc"]}</p>
+                <div style="text-align: center; margin-bottom: 10px; background:#ffffff; padding:15px; border-radius:12px; border:1px solid #e8e8f2;">
+                    <div title="{SHADE_DESCRIPTIONS.get(s_name, '')}" style="width:28px; height:28px; border-radius:50%; background:rgb({r},{g},{b}); margin:0 auto 6px auto; border:2px solid #ffffff; box-shadow: 0 3px 8px rgba(43,16,32,0.18);"></div>
+                    <span style="font-size:10px; font-weight:600; display:block; color:#2b1020; height:24px; overflow:hidden; line-height:1.2; margin-bottom:5px;">{s_name}</span>
                 </div>
                 """, unsafe_allow_html=True)
-                
-                # Show swatches and Try buttons
-                shades = lipstick_palettes[palette_name]
-                s_cols = st.columns(len(shades))
-                for s_idx, (shade_name, bgr) in enumerate(shades.items()):
-                    r, g, b = bgr[2], bgr[1], bgr[0]
-                    with s_cols[s_idx]:
-                        # Draw circle swatch
-                        st.markdown(f"""
-                        <div style="text-align: center; margin-bottom: 10px;">
-                            <div title="{SHADE_DESCRIPTIONS.get(shade_name, '')}" style="width:28px; height:28px; border-radius:50%; background:rgb({r},{g},{b}); margin:0 auto 6px auto; border:2px solid #ffffff; box-shadow: 0 3px 8px rgba(43,16,32,0.18);"></div>
-                            <span style="font-size:10px; font-weight:600; display:block; color:#2b1020; height:24px; overflow:hidden; line-height:1.2;">{shade_name}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        if st.button("Try ✦", key=f"home_try_{shade_name}", use_container_width=True):
-                            st.session_state.selected_shade = shade_name
-                            st.session_state.selected_palette = palette_name
-                            st.session_state.current_page = "💄 Virtual Try-On"
-                            st.rerun()
+                if st.button("Try ✦", key=f"home_cat_{s_name}", use_container_width=True):
+                    st.session_state.selected_shade = s_name
+                    st.session_state.selected_palette = p_name
+                    st.session_state.current_page = "💄 Virtual Try-On Studio"
+                    st.rerun()
         st.write("")
 
-    st.divider()
-    
-    # Future Vision Roadmap
-    st.markdown("<h2 style='text-align: center; margin-bottom: 30px; color:#2b1020;'>✦ Future Vision of AURALITH</h2>", unsafe_allow_html=True)
-    r_col1, r_col2, r_col3 = st.columns(3)
-    with r_col1:
-        st.markdown("""
-        <div class="glass-card" style="height: 100%; border-top: 3px solid #d4a373 !important;">
-            <h5 style="margin-top:0; color:#2b1020 !important;">Real-Time AR Engine</h5>
-            <p style="font-size: 11px; color:#666; line-height: 1.6; margin-bottom:0;">
-                Integrating live browser camera feeds using WebGL shader matrices for low-latency facial landmark mapping and real-time color overlays.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    with r_col2:
-        st.markdown("""
-        <div class="glass-card" style="height: 100%; border-top: 3px solid #fc2779 !important;">
-            <h5 style="margin-top:0; color:#2b1020 !important;">AI Beauty Assistant</h5>
-            <p style="font-size: 11px; color:#666; line-height: 1.6; margin-bottom:0;">
-                An intelligent conversational LLM chat companion that recommends lipstick textures and shades matching your clothes, event type, or mood.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    with r_col3:
-        st.markdown("""
-        <div class="glass-card" style="height: 100%; border-top: 3px solid #2b1020 !important;">
-            <h5 style="margin-top:0; color:#2b1020 !important;">Luxury Shopping & Blending</h5>
-            <p style="font-size: 11px; color:#666; line-height: 1.6; margin-bottom:0;">
-                Enabling home delivery checkout and bespoke laboratory lipstick blending where pigment ratios are custom-mixed according to your skin analysis.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
 def render_try_on_page():
+    BEAUTY_INSIGHTS = {
+        "Fair": {
+            "undertones": ["Cool Mauve", "Pastel Rose", "Soft Pink"],
+            "collections": ["🌸 Pink Aura Collection", "🌿 Quartz Nude Series", "🍇 Berry Luxe Collection"],
+            "advice": "Your fair skin tone with cool undertones looks stunning with soft pinks, pastel mauve, and cool-toned berry shades. Avoid warm corals."
+        },
+        "Light": {
+            "undertones": ["Peach Cashmere", "Warm Pink", "Coral Glow"],
+            "collections": ["🌿 Quartz Nude Series", "🌸 Pink Aura Collection", "🌊 Coral Glow Collection"],
+            "advice": "Your light warm complexion pairs beautifully with warm peach, nude-caramels, and fresh coral tones. A satin or glossy finish enhances your natural glow."
+        },
+        "Medium": {
+            "undertones": ["Warm Honey", "Rose Pink", "Soft Terracotta"],
+            "collections": ["🌿 Quartz Nude Series", "💋 Aura Rouge Collection", "🌊 Coral Glow Collection"],
+            "advice": "Your balanced medium skin tone is incredibly versatile. It is elevated by toasted nudes, warm coral sunset shades, and classic ruby reds."
+        },
+        "Olive": {
+            "undertones": ["Warm Rose Pink", "Berry Plum", "Coral Nude"],
+            "collections": ["🍇 Berry Luxe Collection", "💋 Aura Rouge Collection", "🌊 Coral Glow Collection"],
+            "advice": "Your warm olive complexion is enriched by earthy terracotta tones, deep brick reds, and rich berry-plum pigments."
+        },
+        "Tan": {
+            "undertones": ["Warm Caramel", "Burnt Orange", "Rich Plum"],
+            "collections": ["💋 Aura Rouge Collection", "🍇 Berry Luxe Collection", "🔮 Velvet Plum Edition"],
+            "advice": "Your golden tan skin tone commands deep, high-contrast colors. Rich crimson, warm sienna, and deep velvet plum shades make an exquisite statement."
+        },
+        "Deep": {
+            "undertones": ["Deep Fuchsia", "Dark Plum", "Royal Berry"],
+            "collections": ["🍇 Berry Luxe Collection", "🔮 Velvet Plum Edition", "💋 Aura Rouge Collection"],
+            "advice": "Your rich deep complexion is beautifully defined by intense, highly saturated pigments. Deep amethyst, midnight plum, and royal berry tones look regal."
+        }
+    }
+
     # Brand Promo Banner
     st.markdown("""
     <div class="auralith-promo-banner">
         <span>✨ AURALITH ARTISTRY: Try on virtual shades, unlock complexion-based match recommendation profiles.</span>
-        <span style="border: 1.5px solid white; padding: 4px 12px; border-radius: 20px; cursor: pointer; font-size:11px; font-weight:700;">EXPLORE MORE</span>
     </div>
     """, unsafe_allow_html=True)
     
     st.title("💄 Virtual Try-On Studio")
     st.markdown("### ✨ Experience Your Perfect Shade")
     
-    col_left, col_right = st.columns([1, 1])
+    col_left, col_right = st.columns([1.1, 1.0])
     
     with col_left:
         st.markdown("#### 📷 Input Canvas")
@@ -1199,24 +2217,25 @@ def render_try_on_page():
         for name, c in lipstick_palettes[palette].items():
             border = "4px solid #d4a373" if name == shade else "2px solid rgba(255,255,255,0.4)"
             r, g, b = c[2], c[1], c[0]
-            circles_html += (
-                f'<div title="{name}: {SHADE_DESCRIPTIONS.get(name, "")}" style="display:inline-block;width:30px;height:30px;'
-                f'border-radius:50%;background:rgb({r},{g},{b});'
-                f'margin:4px;border:{border};box-shadow:0 3px 6px rgba(0,0,0,0.15);"></div>'
-            )
+            circles_html += f'<div style="display:inline-block;width:30px;height:30px;border-radius:50%;background:rgb({r},{g},{b});margin:4px;border:{border};box-shadow:0 3px 6px rgba(0,0,0,0.15);"></div>'
         st.markdown(circles_html, unsafe_allow_html=True)
-        st.markdown(f"<p style='font-size:11px; color:#8b8b9c; font-style:italic; margin-top:5px;'>\"{SHADE_DESCRIPTIONS.get(shade, '')}\"</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='font-size:11px; color:#8b8b9c; font-style:italic; margin-top:5px;'>'{SHADE_DESCRIPTIONS.get(shade, '')}'</p>", unsafe_allow_html=True)
         
         # Control parameters
         opacity = st.slider("Texture Coverage (Opacity)", 0.20, 1.00, st.session_state.selected_opacity, step=0.05)
         st.session_state.selected_opacity = opacity
         
-        finishes = ["Glossy 💋", "Satin ✨", "Matte 💄"]
+        finishes = ["Glossy 💋", "Satin ✨", "Matte 💄", "Velvet Finish 🪄", "Glass Finish 💎"]
         default_finish = st.session_state.selected_finish
         default_finish_idx = finishes.index(default_finish) if default_finish in finishes else 0
         
         finish  = st.selectbox("Cosmetic Finish", finishes, index=default_finish_idx)
         st.session_state.selected_finish = finish
+
+        # Smart Lip Liner and Volume Enhancement defaults
+        liner_mode = "None"
+        volume_enhancement = "Natural"
+        rec_liner = {"name": "Natural Define", "color": (128, 128, 128)}
 
     # Try-On rendering execution
     if img_file:
@@ -1227,18 +2246,24 @@ def render_try_on_page():
         # Sequenced luxury loaders
         loading_placeholder = st.empty()
         steps = [
-            "✦ Mapping facial geometry landmarks...",
-            "✦ Segmenting vermillion lip contours...",
-            "✦ Calibrating mouth posture values...",
-            "✦ Inspecting complexion lightness profile..."
+            "✦ Initializing Beauty Engine...",
+            "✦ Activating Facial Intelligence...",
+            "✦ Detecting Lip Structure...",
+            "✦ Mapping Beauty Contours...",
+            "✦ Analyzing Complexion Profile...",
+            "✦ Detecting Undertones...",
+            "✦ Calculating Beauty Score...",
+            "✦ Generating Luxury Finish...",
+            "✦ Rendering AI Beauty Preview...",
+            "✦ Finalizing Transformation..."
         ]
         import time
         for step in steps:
             loading_placeholder.markdown(f"<p style='font-size:13px; color:#fc2779; font-weight:600; font-style:italic; margin:10px 0;'>{step}</p>", unsafe_allow_html=True)
-            time.sleep(0.15)
+            time.sleep(0.12)
         loading_placeholder.empty()
         
-        mask, upper_mask, landmarks, h, w = get_lip_mask_and_landmarks(image_bgr)
+        mask, upper_mask, lower_mask, landmarks, h, w = get_lip_mask_and_landmarks(image_bgr)
             
         if mask is None:
             st.error("❌ AURALITH AI could not locate a face in this canvas. Ensure adequate lighting and front alignment.")
@@ -1248,36 +2273,56 @@ def render_try_on_page():
             st.error("❌ Lip contours not isolated correctly. Try capturing with a neutral facial expression.")
             st.stop()
             
-        # Detect Skin Tone
-        skin_tone, _ = detect_skin_tone(image_bgr, landmarks, h, w)
+        # Detect Skin Tone & Undertone
+        skin_tone, _, undertone = detect_skin_tone(image_bgr, landmarks, h, w)
         recommended_shades = SKIN_TONE_RECOMMENDATIONS.get(skin_tone, [])
         
-        # Tone Badge
+        # Tone & Undertone Badge
         tone_css = SKIN_TONE_COLORS.get(skin_tone, "#888")
         txt_col  = "#fff" if skin_tone in ("Olive", "Tan", "Deep", "Medium") else "#1a1a1a"
         st.markdown(
-            f'<div class="skin-badge" style="background:{tone_css};color:{txt_col};">'
-            f'🎨 Complexion Detected: <b>{skin_tone}</b></div>',
+            f'<div class="skin-badge" style="background:{tone_css};color:{txt_col};margin-right:10px;">'
+            f'🎨 Complexion Detected: <b>{skin_tone}</b></div>'
+            f'<div class="skin-badge" style="background:#2b1020;color:#ffffff;border-color:#d4a373 !important;">'
+            f'🔮 Estimated Undertone: <b>{undertone}</b></div>',
             unsafe_allow_html=True,
         )
         
         # Display AI Undertone Insights Panel
-        undertones_map = {
-            "Fair": "cool pink, berry rose, and soft mauve undertones. They neutralize pale complexions and add a healthy flush.",
-            "Light": "peach, warm coral, and pastel pink undertones. These enhance light complexions with a fresh, youthful glow.",
-            "Medium": "warm honey, terracotta, and soft beige-brown. These balance medium skin values and add natural elegance.",
-            "Olive": "earthy brick, deep coral, and bronzed terracotta. These complement warm olive complexions with a sun-kissed finish.",
-            "Tan": "warm caramel, rich burgundy, and vibrant burnt orange. These amplify tan skin tones with maximum contrast.",
-            "Deep": "deep plum, dark burgundy, fuchsia magenta, and near-black wine. These define deep complexions with rich, dramatic pigments."
-        }
-        undertones = undertones_map.get(skin_tone, "harmonious pigments matching your complexion profile.")
+        insights = BEAUTY_INSIGHTS.get(skin_tone, {
+            "undertones": ["Warm Rose Pink", "Berry Plum", "Coral Nude"],
+            "collections": ["🍇 Berry Luxe Collection", "💋 Aura Rouge Collection"],
+            "advice": "Your complexion pairs exceptionally well with rich pigments and luxury finishes."
+        })
+        undertones_str = ", ".join(insights["undertones"])
+        collections_str = ", ".join([c.replace("💋 ", "").replace("🌸 ", "").replace("🌿 ", "").replace("🍇 ", "").replace("🌊 ", "").replace("🔮 ", "") for c in insights["collections"]])
+        
         st.markdown(f"""
-        <div class="glass-card" style="background: rgba(212, 163, 115, 0.05) !important; border: 1px solid #d4a373 !important; padding:15px; margin-top:5px; margin-bottom:15px;">
-            <span style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#8b8b9c; font-weight:700; display:block; margin-bottom:5px;">✦ AI Beauty Insights</span>
-            <p style="font-size:12px; color:#2b1020; margin-bottom: 0; line-height:1.6;">
-                Your detected complexion profile is <b>{skin_tone}</b>. 
-                Our AI beauty engine recommends shades containing <b>{undertones}</b>
-            </p>
+        <div class="glass-card" style="background: linear-gradient(135deg, rgba(43, 16, 32, 0.03) 0%, rgba(212, 163, 115, 0.08) 100%) !important; border: 1.5px solid #d4a373 !important; padding:22px; margin-top:10px; margin-bottom:20px; border-radius: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <span style="font-size: 18px;">🔮</span>
+                <span style="font-size:12px; text-transform:uppercase; letter-spacing:1.5px; color:#2b1020; font-weight:800; font-family:'Montserrat', sans-serif;">AURALITH AI Complexion Insights</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                <div>
+                    <span style="font-size: 9px; text-transform: uppercase; color: #8b8b9c; font-weight: 700; display: block; letter-spacing: 0.5px;">Detected Profile</span>
+                    <span style="font-size: 14px; font-weight: 700; color: #2b1020;">{skin_tone} Complexion ({undertone})</span>
+                </div>
+                <div>
+                    <span style="font-size: 9px; text-transform: uppercase; color: #8b8b9c; font-weight: 700; display: block; letter-spacing: 0.5px;">Best Undertones</span>
+                    <span style="font-size: 14px; font-weight: 700; color: #fc2779;">{undertones_str}</span>
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <span style="font-size: 9px; text-transform: uppercase; color: #8b8b9c; font-weight: 700; display: block; letter-spacing: 0.5px;">Recommended Collections</span>
+                <span style="font-size: 13px; font-weight: 600; color: #2b1020;">{collections_str}</span>
+            </div>
+            <div style="border-top: 1px solid rgba(212, 163, 115, 0.2); padding-top: 12px;">
+                <span style="font-size: 9px; text-transform: uppercase; color: #8b8b9c; font-weight: 700; display: block; letter-spacing: 0.5px; margin-bottom: 4px;">Beauty Consultant Advice</span>
+                <p style="font-size:12px; color:#555; margin-bottom: 0; line-height:1.6; font-style: italic;">
+                    "{insights["advice"]}"
+                </p>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1296,9 +2341,8 @@ def render_try_on_page():
             for i, rs in enumerate(recommended_shades):
                 if rs in ALL_SHADES:
                     with rec_cols[i]:
-                        # Deterministic confidence for this recommendation
-                        conf_rec = get_match_confidence(rs, skin_tone)
-                        if st.button(f"👄 {rs}\n({conf_rec}%)", key=f"rec_{rs}"):
+                        conf_rec, rec_cat = get_match_score(rs, skin_tone, finish)
+                        if st.button(f"👄 {rs}\n{conf_rec}% Match", key=f"rec_{rs}"):
                             st.session_state.selected_shade = rs
                             st.session_state.selected_palette = ALL_SHADES[rs]["palette"]
                             st.rerun()
@@ -1316,7 +2360,8 @@ def render_try_on_page():
         # Apply lipstick rendering
         with st.spinner("Rendering realistic pigments..."):
             result_bgr = apply_lipstick(
-                image_bgr, mask, upper_mask, final_color, opacity, finish
+                image_bgr, mask, upper_mask, lower_mask, final_color, opacity, finish,
+                volume_enhancement=volume_enhancement, liner_mode=liner_mode, liner_color_bgr=rec_liner["color"]
             )
             # Log try-on to history
             if not st.session_state.try_on_history or st.session_state.try_on_history[-1]["shade"] != active_shade:
@@ -1327,28 +2372,41 @@ def render_try_on_page():
                 })
         result_rgb = cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
         
-        # Calculate match confidence score
-        confidence = get_match_confidence(active_shade, skin_tone)
+        # Calculate match & Beauty Score
+        confidence, match_cat = get_match_score(active_shade, skin_tone, finish)
+        b_score, harmony, rec_level = get_beauty_score_and_harmony(confidence, active_shade, undertone)
         
         # Match Confidence progress bar UI
         st.markdown(f"""
-        <div style="margin: 15px 0 25px 0;">
+        <div style="margin: 15px 0 25px 0; background: rgba(255,255,255,0.7); border: 1px solid #e8e8f2; padding: 15px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.01);">
             <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:700; color:#2b1020; text-transform:uppercase; letter-spacing:0.5px;">
-                <span>AI Complexion Match Score</span>
-                <span style="color:#fc2779;">{confidence}% Match Score</span>
+                <span>AURALITH BEAUTY SCORE™</span>
+                <span style="color:#fc2779;">{b_score} / 100 Harmony ({harmony})</span>
             </div>
             <div style="background-color:#e8e8f2; border-radius:10px; height:8px; width:100%; margin-top:6px; overflow:hidden;">
-                <div style="background: linear-gradient(90deg, #fc2779 0%, #d4a373 100%); width:{confidence}%; height:100%; border-radius:10px;"></div>
+                <div style="background: linear-gradient(90deg, #fc2779 0%, #d4a373 100%); width:{b_score}%; height:100%; border-radius:10px;"></div>
             </div>
+            <div style="font-size: 11px; color:#8b8b9c; margin-top:5px; font-style:italic;">
+                Recommendation Level: {rec_level} | Skin Match: {confidence}% ({match_cat})
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # OCCASION & MOOD DISPLAY
+        meta = SHADE_METADATA.get(active_shade, {"mood": "Bold & Confident", "occasion": "Evening Event"})
+        st.markdown(f"""
+        <div style="background: rgba(18, 9, 16, 0.03); border: 1.5px solid #d4a373; padding: 12px; border-radius: 12px; margin-bottom: 20px;">
+            <div style="font-size: 10px; color:#d4a373; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom: 4px;">Cosmetic Insights</div>
+            <div style="font-size: 13px; color:#2b1020; font-weight:600;">✨ Mood: <b>{meta['mood']}</b></div>
+            <div style="font-size: 13px; color:#2b1020; font-weight:600; margin-top: 2px;">📍 Occasion: <b>{meta['occasion']}</b></div>
         </div>
         """, unsafe_allow_html=True)
         
         # Before / After Comparison slider
         st.markdown("<h4 style='color:#2b1020;'>Transformation Preview ✨</h4>", unsafe_allow_html=True)
-        split_pos = st.slider("Before vs After Slider", 0, 100, 50, label_visibility="collapsed")
         
-        slider_html = render_before_after_slider(image_bgr, result_bgr, split_pos)
-        components.html(slider_html, height=520)
+        slider_html = render_transformation_studio(image_bgr, result_bgr)
+        st.iframe(slider_html, height=600)
         
         st.write("")
         
@@ -1359,14 +2417,13 @@ def render_try_on_page():
         with col_s2:
             st.image(result_rgb, caption=f"AURALITH Finish: {active_shade} ({finish})", use_container_width=True)
             
-        st.success(f"✅ Applied **{active_shade}** ({finish}) | Opacity: {opacity:.0%} | Match: **{confidence}%**")
+        st.success(f"✅ Applied **{active_shade}** ({finish}) | Opacity: {opacity:.0%} | Score: **{b_score}/100** ({harmony})")
         
         # Save Look Button
         st.write("")
         col_save, _ = st.columns([1, 1])
         with col_save:
             if st.button("Save To Lookbook ✦", use_container_width=True):
-                # Avoid duplicate looks
                 already_saved = any(
                     look["shade"] == active_shade and
                     look["finish"] == finish and
@@ -1384,7 +2441,6 @@ def render_try_on_page():
                     img_filename = f"{look_id}.png"
                     img_path = os.path.join(user_images_dir, img_filename)
                     
-                    # Save the tried-on result image
                     try:
                         cv2.imwrite(img_path, result_bgr)
                         image_saved = True
@@ -1399,6 +2455,9 @@ def render_try_on_page():
                         "finish": finish,
                         "opacity": opacity,
                         "skin_tone": skin_tone or "Not Detected",
+                        "undertone": undertone or "Not Detected",
+                        "beauty_score": b_score,
+                        "harmony": harmony,
                         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "bgr": tuple(int(c) for c in final_color),
                         "image_path": img_path if image_saved else ""
@@ -1408,41 +2467,79 @@ def render_try_on_page():
                     
                     if skin_tone and skin_tone not in st.session_state.skin_tone_history:
                         st.session_state.skin_tone_history.append(skin_tone)
-                    st.success("Beauty canvas saved to your Lookbook! View it in your Lookbook tab. ✦")
+                    st.success("Beauty canvas saved to your Lookbook! ✦")
 
 def render_dashboard_page():
     st.title("📸 AURALITH Lookbook ✦")
     st.markdown("### ✨ Your Personalized Digital Beauty Portfolio")
     
-    # Calculate Metrics
-    total_saved = len(st.session_state.saved_looks)
+    # Calculate persistent beauty analytics
+    analytics = calculate_beauty_analytics(st.session_state.saved_looks)
     
-    # Get last skin tone
-    last_skin_tone = "Not Detected"
-    for look in reversed(st.session_state.saved_looks):
-        if look["skin_tone"] != "Not Detected":
-            last_skin_tone = look["skin_tone"]
-            break
-            
-    # Favorite collection
-    fav_palette = "None"
-    if st.session_state.saved_looks:
-        p_list = [l["palette"] for l in st.session_state.saved_looks]
-        fav_palette = max(set(p_list), key=p_list.count)
-    elif st.session_state.try_on_history:
-        p_list = [l["palette"] for l in st.session_state.try_on_history]
-        fav_palette = max(set(p_list), key=p_list.count)
-        
-    # Favorite finish
-    fav_finish = "None"
-    if st.session_state.saved_looks:
-        f_list = [l["finish"] for l in st.session_state.saved_looks]
-        fav_finish = max(set(f_list), key=f_list.count)
-        
+    total_saved = len(st.session_state.saved_looks)
+    last_skin_tone = analytics["last_detected_complexion"]
+    last_undertone = analytics.get("last_detected_undertone", "Not Detected")
+    fav_palette = analytics["favorite_collection"]
+    fav_finish = analytics["preferred_finish"]
+    avg_score = analytics["average_match_score"]
+    avg_b_score = analytics.get("average_beauty_score", 0)
+    most_used_shade = analytics["most_used_shade"]
+    style_summary = analytics.get("personality_summary", "Start saving looks to build your personality profile.")
+    
+    clean_collection = fav_palette.replace("💋 ", "").replace("🌸 ", "").replace("🌿 ", "").replace("🍇 ", "").replace("🌊 ", "").replace("🔮 ", "")
+    clean_finish = fav_finish.replace(" 💋", "").replace(" ✨", "").replace(" 💄", "").replace(" 🪄", "").replace(" 💎", "")
+    
+    # Render Beauty Profile Card
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #2b1020 0%, #d4a373 50%, #fc2779 100%); border-radius: 20px; padding: 30px; color: #ffffff; box-shadow: 0 15px 35px rgba(43, 16, 32, 0.25); border: 2px solid #ffffff; margin-bottom: 30px; position: relative; overflow: hidden;">
+        <div style="position: absolute; right: -50px; bottom: -50px; opacity: 0.15; font-size: 200px; font-weight: bold; pointer-events: none; user-select: none;">✦</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 15px; margin-bottom: 20px;">
+            <div>
+                <h3 style="margin: 0; color: #ffffff !important; font-family: 'Montserrat', sans-serif; font-size: 20px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase;">AURALITH MEMBER</h3>
+                <span style="font-size: 10px; color: #d4a373; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;">✦ VIP BEAUTY PROFILE ✦</span>
+            </div>
+            <div style="font-size: 24px;">✨</div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+            <div>
+                <span style="font-size: 9px; text-transform: uppercase; color: rgba(255,255,255,0.6); font-weight: 700; display: block; letter-spacing: 0.5px; margin-bottom: 4px;">Complexion Type</span>
+                <span style="font-size: 14px; font-weight: 700;">{last_skin_tone} ({last_undertone})</span>
+            </div>
+            <div>
+                <span style="font-size: 9px; text-transform: uppercase; color: rgba(255,255,255,0.6); font-weight: 700; display: block; letter-spacing: 0.5px; margin-bottom: 4px;">Preferred Finish</span>
+                <span style="font-size: 14px; font-weight: 700;">{clean_finish}</span>
+            </div>
+            <div>
+                <span style="font-size: 9px; text-transform: uppercase; color: rgba(255,255,255,0.6); font-weight: 700; display: block; letter-spacing: 0.5px; margin-bottom: 4px;">Favorite Collection</span>
+                <span style="font-size: 14px; font-weight: 700;">{clean_collection}</span>
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+            <div>
+                <span style="font-size: 9px; text-transform: uppercase; color: rgba(255,255,255,0.6); font-weight: 700; display: block; letter-spacing: 0.5px; margin-bottom: 4px;">Most Tried Shade</span>
+                <span style="font-size: 14px; font-weight: 700; color: #ffffff;">{most_used_shade}</span>
+            </div>
+            <div>
+                <span style="font-size: 9px; text-transform: uppercase; color: rgba(255,255,255,0.6); font-weight: 700; display: block; letter-spacing: 0.5px; margin-bottom: 4px;">Average Match Score</span>
+                <span style="font-size: 14px; font-weight: 700; color: #ffffff;">{avg_score}% Compatibility</span>
+            </div>
+            <div>
+                <span style="font-size: 9px; text-transform: uppercase; color: rgba(255,255,255,0.6); font-weight: 700; display: block; letter-spacing: 0.5px; margin-bottom: 4px;">Average Beauty Score™</span>
+                <span style="font-size: 14px; font-weight: 700; color: #ffffff;">{avg_b_score} / 100</span>
+            </div>
+        </div>
+        <div style="border-top: 1px solid rgba(255,255,255,0.15); padding-top: 15px; font-style: italic; font-size: 12px; color: rgba(255,255,255,0.9); line-height: 1.6;">
+            "{style_summary}"
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Statistics Display
+    st.markdown("### 📊 AURALITH Signature Statistics")
     st.markdown(f"""
     <div class="metric-container">
         <div class="metric-card">
-            <div class="metric-title">Bespoke Canvas Saved</div>
+            <div class="metric-title">Total Looks Saved</div>
             <div class="metric-value">💖 {total_saved}</div>
         </div>
         <div class="metric-card">
@@ -1450,30 +2547,38 @@ def render_dashboard_page():
             <div class="metric-value">🎨 {last_skin_tone}</div>
         </div>
         <div class="metric-card">
-            <div class="metric-title">Preferred Collection</div>
-            <div class="metric-value">💄 {fav_palette.replace("💋 ", "").replace("🌸 ", "").replace("🌿 ", "").replace("🔥 ", "").replace("🍇 ", "").replace("🔮 ", "").replace("🌊 ", "")}</div>
+            <div class="metric-title">Undertone Profile</div>
+            <div class="metric-value">🔮 {last_undertone}</div>
+        </div>
+    </div>
+    <div class="metric-container" style="margin-top: -15px;">
+        <div class="metric-card">
+            <div class="metric-title">Most Used Finish</div>
+            <div class="metric-value">✨ {clean_finish}</div>
         </div>
         <div class="metric-card">
-            <div class="metric-title">Preferred Finish</div>
-            <div class="metric-value">✨ {fav_finish.replace(" 💋", "").replace(" ✨", "").replace(" 💄", "")}</div>
+            <div class="metric-title">Most Used Shade</div>
+            <div class="metric-value">💋 {most_used_shade}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-title">Average Beauty Score™</div>
+            <div class="metric-value">📈 {avg_b_score}/100</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # 2. Saved Looks Gallery Manager
+    # Saved Looks Gallery Manager
     st.markdown("### 📸 Your Saved Try-On Gallery")
     if not st.session_state.saved_looks:
-        st.info("No saved looks found yet. Try on different lipstick shades in the Virtual Try-On tab, and click 'Save To Lookbook ✦' to create your lookbook!")
+        st.info("No saved looks found yet. Try on different lipstick shades, and click 'Save To Lookbook ✦' to create your lookbook!")
     else:
-        # Checkboxes for Compare Looks
-        st.markdown("<p style='color:#8b8b9c; font-size:12px;'>Select multiple looks below to trigger the Comparison Studio overlay.</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#8b8b9c; font-size:12px;'>Saved looks inside your luxury Lookbook canvas:</p>", unsafe_allow_html=True)
         
         # Grid layout for looks
         cols = st.columns(3)
         for idx, look in enumerate(st.session_state.saved_looks):
             col_idx = idx % 3
             with cols[col_idx]:
-                # Render the image preview at the top of the column
                 if "image_path" in look and os.path.exists(look["image_path"]):
                     st.image(look["image_path"], use_container_width=True)
                 else:
@@ -1481,6 +2586,8 @@ def render_dashboard_page():
                 
                 # Metadata card
                 r, g, b = look["bgr"][2], look["bgr"][1], look["bgr"][0]
+                look_score = look.get("beauty_score", 85)
+                look_harmony = look.get("harmony", "Luxury Harmony")
                 st.markdown(f"""
                 <div class="look-card" style="margin-top: -10px; background: rgba(255,255,255,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
@@ -1491,97 +2598,258 @@ def render_dashboard_page():
                         <strong>Collection:</strong> {look["palette"]}<br>
                         <strong>Finish:</strong> {look["finish"]}<br>
                         <strong>Opacity:</strong> {look["opacity"]:.0%}<br>
-                        <strong>Skin Tone:</strong> {look["skin_tone"]}<br>
+                        <strong>Skin Profile:</strong> {look.get("skin_tone", "Medium")} ({look.get("undertone", "Neutral")})<br>
+                        <strong>Beauty Score™:</strong> {look_score}/100 ({look_harmony})<br>
                         <span style="font-size: 9px; color: #888;">Saved: {look["timestamp"]}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Checkbox for comparison
-                st.checkbox("Select to Compare ✨", key=f"comp_{look['id']}")
-                
-                btn1, btn2 = st.columns(2)
-                with btn1:
-                    if st.button("Apply Again 💄", key=f"apply_{idx}", use_container_width=True):
-                        st.session_state.selected_shade = look["shade"]
-                        st.session_state.selected_palette = look["palette"]
-                        st.session_state.selected_finish = look["finish"]
-                        st.session_state.selected_opacity = look["opacity"]
-                        st.session_state.current_page = "💄 Virtual Try-On"
-                        st.rerun()
-                with btn2:
-                    if st.button("Delete Look 🗑️", key=f"delete_{idx}", use_container_width=True):
-                        look_to_delete = st.session_state.saved_looks.pop(idx)
-                        if "image_path" in look_to_delete and os.path.exists(look_to_delete["image_path"]):
-                            try:
-                                os.remove(look_to_delete["image_path"])
-                            except Exception:
-                                pass
-                        save_user_looks(st.session_state.username, st.session_state.saved_looks)
-                        st.rerun()
+                if st.button("Delete Look 🗑", key=f"del_{look['id']}", use_container_width=True):
+                    if "image_path" in look and os.path.exists(look["image_path"]):
+                        try:
+                            os.remove(look["image_path"])
+                        except Exception:
+                            pass
+                    st.session_state.saved_looks.pop(idx)
+                    save_user_looks(st.session_state.username, st.session_state.saved_looks)
+                    st.toast("Look deleted.")
+                    st.rerun()
+
+        # Recommended shades summary inside Dashboard
+        st.write("")
+        st.divider()
+        st.markdown("### 💖 Complexion Match Picks")
+        st.markdown(f"Based on your profile, your last detected skin tone is **{last_skin_tone} ({last_undertone})**. Here are recommended shades:")
         
-        # Renders the Comparison Studio if multiple items are checked
-        selected_compare_looks = []
-        for look in st.session_state.saved_looks:
-            if st.session_state.get(f"comp_{look['id']}"):
-                selected_compare_looks.append(look)
-                
-        if len(selected_compare_looks) > 1:
-            st.divider()
-            st.markdown("### ✨ Comparison Studio Overlay")
-            st.markdown("Comparing your selected beauty canvases side-by-side:")
-            comp_cols = st.columns(len(selected_compare_looks))
-            for c_idx, cl in enumerate(selected_compare_looks):
-                with comp_cols[c_idx]:
-                    if "image_path" in cl and os.path.exists(cl["image_path"]):
-                        st.image(cl["image_path"], use_container_width=True)
-                    st.markdown(f"""
-                    <div style="background: rgba(212, 163, 115, 0.1); border-radius: 12px; padding: 12px; border: 1.5px solid #d4a373; text-align: center; margin-top:5px;">
-                        <h4 style="margin: 0 0 5px 0; font-size:14px; color:#2b1020 !important;">{cl["shade"]}</h4>
-                        <span style="font-size:11px; color:#555;">Finish: {cl["finish"]}<br>Match: {get_match_confidence(cl["shade"], cl["skin_tone"])}%</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-            st.divider()
-                        
-    # Recommendations based on profile
-    st.markdown("---")
-    st.markdown("### ✨ Personalized Complexion Suggestions")
-    last_detected_skin = "Medium"
-    for look in reversed(st.session_state.saved_looks):
-        if look["skin_tone"] != "Not Detected":
-            last_detected_skin = look["skin_tone"]
-            break
-            
-    st.markdown(f"Based on your profile, your detected skin tone is **{last_detected_skin}**. Here are recommended shades for your complexion:")
+        rec_shades = SKIN_TONE_RECOMMENDATIONS.get(last_skin_tone, [])
+        if rec_shades:
+            rec_cols = st.columns(min(len(rec_shades), 5))
+            for idx, shade_name in enumerate(rec_shades[:5]):
+                if shade_name in ALL_SHADES:
+                    shade_info = ALL_SHADES[shade_name]
+                    bgr = shade_info["bgr"]
+                    r, g, b = bgr[2], bgr[1], bgr[0]
+                    with rec_cols[idx]:
+                        conf, _ = get_match_score(shade_name, last_skin_tone, "Glossy 💋")
+                        b_score, harmony, _ = get_beauty_score_and_harmony(conf, shade_name, last_undertone)
+                        st.markdown(f"""
+                        <div style="background: rgba(255,255,255,0.6); padding: 12px; border-radius: 12px; text-align: center; border: 1px solid #e8e8f2; box-shadow: 0 4px 10px rgba(0,0,0,0.01);">
+                            <div style="width: 24px; height: 24px; border-radius: 50%; background: rgb({r},{g},{b}); margin: 0 auto 6px auto; border: 1px solid rgba(0,0,0,0.1);"></div>
+                            <span style="font-size:11px; font-weight:600; display:block; color:#2b1020; height:32px; overflow:hidden; line-height:1.2;">{shade_name}</span>
+                            <span style="font-size:10px; color:#fc2779; font-weight:700;">{b_score}/100 Harmony</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        if st.button("Apply ✦", key=f"rec_dash_{shade_name}", use_container_width=True):
+                            st.session_state.selected_shade = shade_name
+                            st.session_state.selected_palette = shade_info["palette"]
+                            st.session_state.current_page = "💄 Virtual Try-On Studio"
+                            st.rerun()
+
+def render_live_studio_page():
+    st.markdown("""
+    <div class="auralith-promo-banner">
+        <span>🎥 AURALITH LIVE BEAUTY STUDIO: Experience luxury beauty in real time.</span>
+    </div>
+    """, unsafe_allow_html=True)
     
-    rec_shades = SKIN_TONE_RECOMMENDATIONS.get(last_detected_skin, [])
-    if rec_shades:
-        rec_cols = st.columns(len(rec_shades))
-        for idx, shade_name in enumerate(rec_shades):
-            if shade_name in ALL_SHADES:
-                shade_info = ALL_SHADES[shade_name]
-                bgr = shade_info["bgr"]
-                r, g, b = bgr[2], bgr[1], bgr[0]
-                with rec_cols[idx]:
-                    conf = get_match_confidence(shade_name, last_detected_skin)
-                    st.markdown(f"""
-                    <div style="background: rgba(255,255,255,0.6); padding: 12px; border-radius: 12px; text-align: center; border: 1px solid #e8e8f2; box-shadow: 0 4px 10px rgba(0,0,0,0.01);">
-                        <div style="width: 24px; height: 24px; border-radius: 50%; background: rgb({r},{g},{b}); margin: 0 auto 6px auto; border: 1px solid rgba(0,0,0,0.1);"></div>
-                        <span style="font-size:11px; font-weight:600; display:block; color:#2b1020; height:32px; overflow:hidden; line-height:1.2;">{shade_name}</span>
-                        <span style="font-size:10px; color:#fc2779; font-weight:700;">{conf}% Match</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    if st.button("Experience ✦", key=f"rec_dash_{shade_name}", use_container_width=True):
-                        st.session_state.selected_shade = shade_name
-                        st.session_state.selected_palette = shade_info["palette"]
-                        st.session_state.current_page = "💄 Virtual Try-On"
-                        st.rerun()
+    st.title("🎥 Live AI Beauty Studio")
+    st.markdown("### ✦ Real-Time Live Makeup Simulation")
+    
+    col_left, col_right = st.columns([1.3, 1.0])
+    
+    with col_right:
+        st.markdown("#### 🎨 Color Selection")
+        # Palette selection
+        default_palette = st.session_state.selected_palette
+        if default_palette not in lipstick_palettes:
+            default_palette = list(lipstick_palettes.keys())[0]
+            
+        palette = st.selectbox("Collection", list(lipstick_palettes.keys()), index=list(lipstick_palettes.keys()).index(default_palette), key="live_palette")
+        
+        # Shade selection
+        shade_list = list(lipstick_palettes[palette].keys())
+        default_shade = st.session_state.selected_shade
+        default_shade_idx = 0
+        if default_shade in shade_list:
+            default_shade_idx = shade_list.index(default_shade)
+            
+        shade = st.selectbox("Shade Profile", shade_list, index=default_shade_idx, key="live_shade")
+        
+        # Sync to session state
+        st.session_state.selected_shade = shade
+        st.session_state.selected_palette = palette
+        
+        # Details & swatches
+        circles_html = ""
+        for name, c in lipstick_palettes[palette].items():
+            border = "4px solid #d4a373" if name == shade else "2px solid rgba(255,255,255,0.4)"
+            r, g, b = c[2], c[1], c[0]
+            circles_html += f'<div style="display:inline-block;width:30px;height:30px;border-radius:50%;background:rgb({r},{g},{b});margin:4px;border:{border};box-shadow:0 3px 6px rgba(0,0,0,0.15);"></div>'
+        st.markdown(circles_html, unsafe_allow_html=True)
+        st.markdown(f"<p style='font-size:11px; color:#8b8b9c; font-style:italic; margin-top:5px;'>'{SHADE_DESCRIPTIONS.get(shade, '')}'</p>", unsafe_allow_html=True)
+        
+        # Control parameters
+        opacity = st.slider("Texture Coverage (Opacity)", 0.20, 1.00, st.session_state.selected_opacity, step=0.05, key="live_opacity")
+        st.session_state.selected_opacity = opacity
+        
+        finishes = ["Glossy 💋", "Satin ✨", "Matte 💄", "Velvet Finish 🪄", "Glass Finish 💎"]
+        default_finish = st.session_state.selected_finish
+        default_finish_idx = finishes.index(default_finish) if default_finish in finishes else 0
+        finish = st.selectbox("Cosmetic Finish", finishes, index=default_finish_idx, key="live_finish")
+        st.session_state.selected_finish = finish
+        
+        # Smart Lip Liner and Volume Enhancement defaults
+        liner_mode = "None"
+        volume_enhancement = "Natural"
+        rec_liner = {"name": "Natural Define", "color": (128, 128, 128)}
+        
+        # Match scores calculation
+        last_detected_skin = "Medium"
+        last_detected_undertone = "Neutral"
+        for look in reversed(st.session_state.saved_looks):
+            if look.get("skin_tone") and look["skin_tone"] != "Not Detected":
+                last_detected_skin = look["skin_tone"]
+                last_detected_undertone = look.get("undertone", "Neutral")
+                break
+                
+        match_val, match_cat = get_match_score(shade, last_detected_skin, finish)
+        b_score, harmony, rec_level = get_beauty_score_and_harmony(match_val, shade, last_detected_undertone)
+        
+        # OCCASION & MOOD DISPLAY
+        meta = SHADE_METADATA.get(shade, {"mood": "Bold & Confident", "occasion": "Evening Event"})
+        st.markdown(f"""
+        <div style="background: rgba(18, 9, 16, 0.03); border: 1.5px solid #d4a373; padding: 12px; border-radius: 12px; margin-top: 15px;">
+            <div style="font-size: 10px; color:#d4a373; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom: 4px;">Cosmetic Insights</div>
+            <div style="font-size: 13px; color:#2b1020; font-weight:600;">✨ Mood: <b>{meta['mood']}</b></div>
+            <div style="font-size: 13px; color:#2b1020; font-weight:600; margin-top: 2px;">📍 Occasion: <b>{meta['occasion']}</b></div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col_left:
+        st.markdown("#### 🎥 Live Camera Studio View")
+        final_color = lipstick_palettes[palette][shade]
+        liner_color_bgr = rec_liner["color"]
+        
+        # Render the custom live webcam component!
+        res = live_beauty_studio(
+            shade_name=shade,
+            collection=palette,
+            color_bgr=final_color,
+            opacity=opacity,
+            finish=finish,
+            liner_mode=liner_mode,
+            liner_color_bgr=liner_color_bgr,
+            volume_enhancement=volume_enhancement,
+            match_score=match_val,
+            beauty_score=b_score,
+            harmony=harmony,
+            rec_level=rec_level,
+            mood=meta["mood"],
+            occasion=meta["occasion"]
+        )
+        
+        # Handle captured look from the component
+        if res and res.get("action") == "capture_live_look":
+            img_data_base64 = res["image_data"].split(",")[1]
+            import base64
+            img_bytes = base64.b64decode(img_data_base64)
+            
+            look_id = str(uuid.uuid4())
+            user_dir = get_user_profile_dir(st.session_state.username)
+            user_images_dir = os.path.join(user_dir, "images")
+            os.makedirs(user_images_dir, exist_ok=True)
+            
+            img_filename = f"{look_id}.png"
+            img_path = os.path.join(user_images_dir, img_filename)
+            
+            with open(img_path, "wb") as f_img:
+                f_img.write(img_bytes)
+                
+            look_data = {
+                "id": look_id,
+                "shade": res["shade"],
+                "palette": palette,
+                "finish": res["finish"],
+                "opacity": opacity,
+                "skin_tone": last_detected_skin,
+                "undertone": last_detected_undertone,
+                "beauty_score": res["beauty_score"],
+                "harmony": res["harmony"],
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "bgr": tuple(int(c) for c in final_color),
+                "image_path": img_path
+            }
+            st.session_state.saved_looks.append(look_data)
+            save_user_looks(st.session_state.username, st.session_state.saved_looks)
+            st.success("📸 Live capture saved to your Lookbook! ✦")
+            st.rerun()
+
+def render_mobile_page():
+    st.markdown("""
+    <div class="auralith-promo-banner">
+        <span>📱 MOBILE BEAUTY EXPERIENCE: Exquisite try-on access directly from your phone.</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.title("📱 Mobile Beauty Experience")
+    st.markdown("### ✦ Take AURALITH with You")
+    
+    col_left, col_right = st.columns([1.2, 1.0])
+    
+    with col_left:
+        st.markdown("""
+        <div class="glass-card" style="border-top: 4px solid #d4a373 !important;">
+            <h3 style="margin-top:0; color:#2b1020 !important;">QR CONNECT SYSTEM</h3>
+            <p style="font-size:13px; color:#555; line-height:1.6; margin-bottom:15px;">
+                Scan the QR code on the right with your smartphone camera to launch the AURALITH V3.1 Live Studio directly on your mobile device.
+            </p>
+            <h4 style="color:#fc2779; font-size:14px; margin-bottom:5px;">Steps to Connect:</h4>
+            <ol style="font-size:12px; color:#555; line-height:1.8; margin-left:20px;">
+                <li>Connect your smartphone to the <strong>same Wi-Fi network</strong> as this computer.</li>
+                <li>Open your smartphone's Camera app and point it at the QR code.</li>
+                <li>Tap the link banner that pops up on your screen.</li>
+                <li>Accept camera permissions when prompted in your mobile browser.</li>
+                <li>Experience luxury beauty try-on on the go!</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col_right:
+        # Get local IP address
+        import socket
+        def get_local_ip():
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0]
+            except Exception:
+                ip = 'localhost'
+            finally:
+                s.close()
+            return ip
+            
+        local_ip = get_local_ip()
+        mobile_url = f"http://{local_ip}:8501"
+        
+        # Generate QR code using public web api (extremely reliable, requires no extra python libraries)
+        qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={mobile_url}"
+        
+        st.markdown(f"""
+        <div class="glass-card" style="text-align: center; border-top: 4px solid #fc2779 !important;">
+            <h4 style="margin-top:0; color:#fc2779 !important;">SCAN ME</h4>
+            <div style="margin: 20px 0; background: #ffffff; padding: 15px; border-radius: 12px; display: inline-block; border: 1.5px solid #e8e8f2;">
+                <img src="{qr_api_url}" alt="AURALITH Mobile Studio Link" style="width: 200px; height: 200px; display: block;">
+            </div>
+            <p style="font-size: 11px; font-weight: 700; color: #2b1020; margin-bottom: 2px;">Mobile Connection URL:</p>
+            <code style="font-size: 11px; color:#fc2779; background: rgba(252, 39, 121, 0.05); padding: 3px 8px; border-radius: 4px;">{mobile_url}</code>
+        </div>
+        """, unsafe_allow_html=True)
 
 # -----------------
 # CONTROL FLOW & ROUTING
 # -----------------
 def render_nykaa_header():
-    # Render header inside a bordered container card using st.container(border=True)
     with st.container(border=True):
         col_logo, col_search, col_nav = st.columns([0.5, 1.8, 2.7], vertical_alignment="center")
         
@@ -1608,7 +2876,7 @@ def render_nykaa_header():
                 if matched_shade:
                     st.session_state.selected_shade = matched_shade
                     st.session_state.selected_palette = ALL_SHADES[matched_shade]["palette"]
-                    st.session_state.current_page = "💄 Virtual Try-On"
+                    st.session_state.current_page = "💄 Virtual Try-On Studio"
                     st.toast(f"Found and loaded shade: {matched_shade} 💋")
                     st.rerun()
                 else:
@@ -1620,7 +2888,7 @@ def render_nykaa_header():
             
             with nav_cols[0]:
                 if st.button("✦ Studio", key="nav_studio_btn", use_container_width=True):
-                    st.session_state.current_page = "💄 Virtual Try-On"
+                    st.session_state.current_page = "💄 Virtual Try-On Studio"
                     st.rerun()
             with nav_cols[1]:
                 if st.button("✦ Locator", key="nav_locator_btn", use_container_width=True):
@@ -1629,7 +2897,7 @@ def render_nykaa_header():
                     st.rerun()
             with nav_cols[2]:
                 if st.button(f"✦ Bag ({bag_count})", key="nav_bag_btn", use_container_width=True):
-                    st.session_state.current_page = "📸 Lookbook Dashboard"
+                    st.session_state.current_page = "📸 AURALITH Lookbook"
                     st.rerun()
 
 if not st.session_state.logged_in:
@@ -1638,7 +2906,7 @@ else:
     render_nykaa_header()
     render_sidebar()
     
-    # Store locator display helper
+    # Store locator helper
     if st.session_state.get("show_locator"):
         st.markdown("""
         <div class="glass-card" style="background: rgba(212, 163, 115, 0.08) !important; border: 2px solid #d4a373 !important; padding: 25px; margin-bottom: 25px; border-radius: 16px;">
@@ -1659,7 +2927,11 @@ else:
             
     if st.session_state.current_page == "✨ AURALITH Home":
         render_home_page()
-    elif st.session_state.current_page == "💄 Virtual Try-On":
+    elif st.session_state.current_page == "💄 Virtual Try-On Studio":
         render_try_on_page()
-    elif st.session_state.current_page == "📸 Lookbook Dashboard":
+    elif st.session_state.current_page == "🎥 Live AI Beauty Studio":
+        render_live_studio_page()
+    elif st.session_state.current_page == "📸 AURALITH Lookbook":
         render_dashboard_page()
+    elif st.session_state.current_page == "📱 Mobile Beauty Experience":
+        render_mobile_page()
