@@ -363,3 +363,16 @@ async def save_look(
             return {"look_id": str(look_id)}
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics & Catch-all route to debug Vercel path forwarding
+# ---------------------------------------------------------------------------
+
+@app.api_route("/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+async def catch_all(path_name: str):
+    return {
+        "received_path": f"/{path_name}",
+        "message": "FastAPI catch-all diagnostic endpoint hit. The path requested did not match any standard endpoint.",
+        "registered_routes": [r.path for r in app.routes if hasattr(r, "path")]
+    }
