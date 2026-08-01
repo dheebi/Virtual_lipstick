@@ -2347,27 +2347,40 @@ def render_try_on_page():
         image_rgb = np.array(image_pil)
         image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
         
-        # Sequenced luxury loaders
-        loading_placeholder = st.empty()
-        steps = [
-            "✦ Initializing Beauty Engine...",
-            "✦ Activating Facial Intelligence...",
-            "✦ Detecting Lip Structure...",
-            "✦ Mapping Beauty Contours...",
-            "✦ Analyzing Complexion Profile...",
-            "✦ Detecting Undertones...",
-            "✦ Calculating Beauty Score...",
-            "✦ Generating Luxury Finish...",
-            "✦ Rendering AI Beauty Preview...",
-            "✦ Finalizing Transformation..."
-        ]
-        import time
-        for step in steps:
-            loading_placeholder.markdown(f"<p style='font-size:13px; color:#fc2779; font-weight:600; font-style:italic; margin:10px 0;'>{step}</p>", unsafe_allow_html=True)
-            time.sleep(0.12)
-        loading_placeholder.empty()
+        # Calculate image hash for caching
+        import hashlib
+        img_bytes = img_file.getvalue()
+        img_hash = hashlib.sha256(img_bytes).hexdigest()
+        is_new_image = (st.session_state.get("cached_image_hash") != img_hash)
         
-        mask, upper_mask, lower_mask, landmarks, h, w = get_lip_mask_and_landmarks(image_bgr)
+        # Sequenced luxury loaders (only on new uploads/captures to avoid lag on shade change)
+        if is_new_image:
+            loading_placeholder = st.empty()
+            steps = [
+                "✦ Initializing Beauty Engine...",
+                "✦ Activating Facial Intelligence...",
+                "✦ Detecting Lip Structure...",
+                "✦ Mapping Beauty Contours...",
+                "✦ Analyzing Complexion Profile...",
+                "✦ Detecting Undertones...",
+                "✦ Calculating Beauty Score...",
+                "✦ Generating Luxury Finish...",
+                "✦ Rendering AI Beauty Preview...",
+                "✦ Finalizing Transformation..."
+            ]
+            import time
+            for step in steps:
+                loading_placeholder.markdown(f"<p style='font-size:13px; color:#fc2779; font-weight:600; font-style:italic; margin:10px 0;'>{step}</p>", unsafe_allow_html=True)
+                time.sleep(0.04) # Reduced fake delay step time slightly to speed up
+            loading_placeholder.empty()
+        
+        # Caching face landmarks, masks and dimension info
+        if not is_new_image and "cached_lip_data" in st.session_state:
+            mask, upper_mask, lower_mask, landmarks, h, w = st.session_state.cached_lip_data
+        else:
+            mask, upper_mask, lower_mask, landmarks, h, w = get_lip_mask_and_landmarks(image_bgr)
+            st.session_state.cached_image_hash = img_hash
+            st.session_state.cached_lip_data = (mask, upper_mask, lower_mask, landmarks, h, w)
             
         if mask is None:
             st.error("❌ AURALITH AI could not locate a face in this canvas. Ensure adequate lighting and front alignment.")
@@ -2377,8 +2390,13 @@ def render_try_on_page():
             st.error("❌ Lip contours not isolated correctly. Try capturing with a neutral facial expression.")
             st.stop()
             
-        # Detect Skin Tone & Undertone
-        skin_tone, _, undertone = detect_skin_tone(image_bgr, landmarks, h, w)
+        # Detect & Cache Skin Tone & Undertone
+        if not is_new_image and "cached_skin_data" in st.session_state:
+            skin_tone, avg_bgr, undertone = st.session_state.cached_skin_data
+        else:
+            skin_tone, avg_bgr, undertone = detect_skin_tone(image_bgr, landmarks, h, w)
+            st.session_state.cached_skin_data = (skin_tone, avg_bgr, undertone)
+            
         recommended_shades = SKIN_TONE_RECOMMENDATIONS.get(skin_tone, [])
         
         # Tone & Undertone Badge
@@ -2683,8 +2701,9 @@ def render_dashboard_page():
         for idx, look in enumerate(st.session_state.saved_looks):
             col_idx = idx % 3
             with cols[col_idx]:
-                if "image_path" in look and os.path.exists(look["image_path"]):
-                    st.image(look["image_path"], use_container_width=True)
+                image_source = look.get("image_path")
+                if image_source and (image_source.startswith("http") or image_source.startswith("data:image/") or os.path.exists(image_source)):
+                    st.image(image_source, use_container_width=True)
                 else:
                     st.markdown('<div style="width:100%; height:200px; border-radius:12px; background:rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:center; color:#555; font-size:12px; border: 1px solid rgba(255,255,255,0.05); margin-bottom:10px;">No Image Preview</div>', unsafe_allow_html=True)
                 

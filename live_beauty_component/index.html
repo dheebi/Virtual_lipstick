@@ -431,6 +431,7 @@
   // Start webcam feed and load face mesh models
   function startCamera() {
     btnStart.style.display = "none";
+    localStorage.setItem("camera_active", "true");
     runLoaderSequence(() => {
       initFaceMesh();
     });
@@ -475,6 +476,7 @@
       .catch((err) => {
         console.error("Camera access failed:", err);
         alert("Camera access denied or device in use. Please check permissions.");
+        localStorage.setItem("camera_active", "false");
         btnStart.style.display = "inline-flex";
         statusIndicator.style.display = "none";
         btnCapture.style.display = "none";
@@ -487,6 +489,7 @@
   }
 
   function stopCamera() {
+    localStorage.setItem("camera_active", "false");
     cameraActive = false;
     if (cameraHelper) {
       cameraHelper.stop();
@@ -759,6 +762,12 @@
     setTimeout(adjustHeight, 50);
     // Render initial state
     loaderOverlay.style.display = "none";
+    
+    // Auto-start camera if it was previously active!
+    if (localStorage.getItem("camera_active") === "true") {
+      btnStart.style.display = "none";
+      initFaceMesh();
+    }
   }
 </script>
 
