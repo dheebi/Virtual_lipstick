@@ -5,6 +5,7 @@ import io
 import os
 import secrets
 import sys
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -24,6 +25,45 @@ from scipy import ndimage
 from model_storage import get_session
 
 app = FastAPI()
+
+
+# ---------------------------------------------------------------------------
+# Vercel Path Rewrite Middleware
+# ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def vercel_path_rewrite(request: Request, call_next):
+    """
+    Middleware that intercepts requests forwarded to '/api/index.py' by Vercel's rewrite rule.
+    It extracts the original requested path from the '__vercel_path' query parameter,
+    restores the FastAPI routing path, cleans up the query parameter, and transparently
+    forwards the request to the matching endpoint.
+    """
+    scope = request.scope
+    if scope["path"] == "/api/index.py":
+        query_string = scope.get("query_string", b"").decode("utf-8")
+        params = urllib.parse.parse_qs(query_string)
+        
+        vercel_paths = params.pop("__vercel_path", None)
+        if vercel_paths:
+            original_path = vercel_paths[0]
+            if original_path.startswith("/"):
+                original_path = original_path[1:]
+            
+            # Reconstruct the original path (e.g. /api/looks)
+            new_path = f"/api/{original_path}"
+            scope["path"] = new_path
+            scope["raw_path"] = new_path.encode("utf-8")
+            
+            # Reconstruct the query string without the custom routing parameter
+            new_params = []
+            for k, vals in params.items():
+                for v in vals:
+                    new_params.append((k, v))
+            scope["query_string"] = urllib.parse.urlencode(new_params).encode("utf-8")
+            
+    response = await call_next(request)
+    return response
 
 
 def get_db():
