@@ -16,7 +16,7 @@ import psycopg2
 import psycopg2.errors
 import psycopg2.extras
 import bcrypt
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, Request
 from fastapi.responses import JSONResponse
 from PIL import Image
 from scipy import ndimage
@@ -370,9 +370,10 @@ async def save_look(
 # ---------------------------------------------------------------------------
 
 @app.api_route("/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-async def catch_all(path_name: str):
+async def catch_all(request: Request, path_name: str):
     return {
         "received_path": f"/{path_name}",
-        "message": "FastAPI catch-all diagnostic endpoint hit. The path requested did not match any standard endpoint.",
+        "headers": dict(request.headers),
+        "message": "FastAPI catch-all diagnostic endpoint hit.",
         "registered_routes": [r.path for r in app.routes if hasattr(r, "path")]
     }
