@@ -92,7 +92,7 @@ def migrate_users(conn, users_xlsx_path: str) -> dict:
                 (username, email, stored_hash, display_name),
             )
             user_id = cur.fetchone()[0]
-            username_to_id[username] = user_id
+            username_to_id[username.lower()] = user_id
 
     conn.commit()
     print(f"Migrated {len(username_to_id)} users successfully. (Mock emails generated where missing).")
@@ -135,7 +135,7 @@ def migrate_looks(conn, profiles_dir: str, username_to_id: dict, blob_token: str
                 continue
 
             username = user_dir.name
-            user_id = username_to_id.get(username)
+            user_id = username_to_id.get(username.lower())
             if not user_id:
                 skipped_users.append(username)
                 continue
