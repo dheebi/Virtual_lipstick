@@ -113,6 +113,7 @@ async def get_current_user(authorization: str = Header(None)) -> str:
 # ---------------------------------------------------------------------------
 
 @app.post("/api/segment")
+@app.post("/segment")
 async def segment(
     image: UploadFile = File(...),
     current_user_id: str = Depends(get_current_user)
@@ -187,6 +188,7 @@ async def segment(
 # ---------------------------------------------------------------------------
 
 @app.post("/api/auth/register")
+@app.post("/auth/register")
 async def register(
     username: str = Form(...),
     email: str = Form(...),
@@ -237,6 +239,7 @@ async def register(
 
 
 @app.post("/api/auth/login")
+@app.post("/auth/login")
 async def login(
     username: str = Form(...),
     password: str = Form(...)
@@ -290,6 +293,7 @@ async def login(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/looks")
+@app.get("/looks")
 async def list_looks(
     current_user_id: str = Depends(get_current_user)
 ):
@@ -312,6 +316,7 @@ async def list_looks(
 
 
 @app.post("/api/looks")
+@app.post("/looks")
 async def save_look(
     shade_name: str = Form(...),
     shade_hex: str = Form(...),
