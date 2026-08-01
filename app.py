@@ -28,79 +28,67 @@ def get_image_as_b64(file_path):
     return None
 
 # =========================
-# EXCEL BACKEND USER DATABASE
+# VERCEL FASTAPI API CONFIGURATION
 # =========================
-DB_FILE = "users.xlsx"
-db_lock = threading.Lock()
+import requests
 
-def init_user_db():
-    with db_lock:
-        if not os.path.exists(DB_FILE):
-            df = pd.DataFrame(columns=["username", "password_hash", "created_at"])
-            try:
-                df.to_excel(DB_FILE, index=False)
-            except PermissionError:
-                st.error("Error: The user database file is open in Excel. Please close it to let the app initialize.")
-                st.stop()
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://virtual-lipstick-74pf.vercel.app")
+BLOB_API_URL = "https://blob.vercel-storage.com"
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def upload_to_blob(file_path, blob_token):
+    """
+    Uploads a local image file to Vercel Blob and returns its public URL.
+    """
+    with open(file_path, "rb") as f:
+        resp = requests.put(
+            f"{BLOB_API_URL}/{os.path.basename(file_path)}",
+            data=f,
+            headers={
+                "Authorization": f"Bearer {blob_token}",
+                "x-content-type": "image/png",
+            },
+        )
+    resp.raise_for_status()
+    return resp.json()["url"]
 
 def register_user(username, password):
     try:
-        init_user_db()
-    except Exception:
-        pass
-    with db_lock:
-        try:
-            df = pd.read_excel(DB_FILE)
-        except PermissionError:
-            return False, "Error: The user database file (users.xlsx) is open in Excel. Please close it and try again."
-        except Exception:
-            df = pd.DataFrame(columns=["username", "password_hash", "created_at"])
-        
-        usernames_existing = df["username"].dropna().astype(str).str.lower().values
-        if username.lower() in usernames_existing:
-            return False, "Username already exists."
-        
-        new_row = {
-            "username": username,
-            "password_hash": hash_password(password),
-            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-        try:
-            df.to_excel(DB_FILE, index=False)
-        except PermissionError:
-            return False, "Error: The user database file (users.xlsx) is open in Excel. Please close it and try again."
-        except Exception as e:
-            return False, f"Database error: {str(e)}"
-        return True, "Account created successfully!"
+        email = f"{username}@example.com"
+        resp = requests.post(
+            f"{API_BASE_URL}/api/auth/register",
+            data={"username": username, "email": email, "password": password, "display_name": username}
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            st.session_state.session_token = data["session_token"]
+            st.session_state.username = username
+            return True, "Account created successfully!"
+        else:
+            try:
+                err_detail = resp.json().get("detail", "Registration failed.")
+            except Exception:
+                err_detail = "Registration failed."
+            return False, err_detail
+    except Exception as e:
+        return False, f"Failed to connect to authentication server: {e}"
 
 def authenticate_user(username, password):
     try:
-        init_user_db()
-    except Exception:
-        pass
-    with db_lock:
-        try:
-            df = pd.read_excel(DB_FILE)
-        except PermissionError:
-            st.error("Error: The user database file (users.xlsx) is open in Excel. Please close it and try again.")
-            st.stop()
-        except Exception:
+        resp = requests.post(
+            f"{API_BASE_URL}/api/auth/login",
+            data={"username": username, "password": password}
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            st.session_state.session_token = data["session_token"]
+            st.session_state.username = username
+            return True
+        else:
             return False
-            
-        pwd_hash = hash_password(password)
-        df_filtered = df.dropna(subset=["username", "password_hash"])
-        match = df_filtered[
-            (df_filtered["username"].astype(str).str.lower() == username.lower()) &
-            (df_filtered["password_hash"].astype(str) == pwd_hash)
-        ]
-        return not match.empty
+    except Exception as e:
+        st.error(f"Failed to connect to authentication server: {e}")
+        return False
 
-# Initialize DB on startup
-init_user_db()
 
 # =========================
 # LIVE BEAUTY STUDIO CUSTOM COMPONENT
@@ -195,43 +183,156 @@ def calculate_beauty_analytics(looks_list):
     }
 
 def load_user_looks(username):
-    user_dir = get_user_profile_dir(username)
-    looks_file = os.path.join(user_dir, "looks.json")
-    images_dir = os.path.join(user_dir, "images")
-    
-    # Ensure directories exist
-    if not os.path.exists(images_dir):
-        os.makedirs(images_dir, exist_ok=True)
-        
-    if not os.path.exists(looks_file):
+    token = st.session_state.get("session_token")
+    if not token:
         return []
-        
+    
     try:
-        with open(looks_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict) and "looks" in data:
-                return data["looks"]
-            return data
+        resp = requests.get(
+            f"{API_BASE_URL}/api/looks",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        if resp.status_code == 200:
+            looks_data = resp.json().get("looks", [])
+            translated_looks = []
+            for item in looks_data:
+                # Extract BGR color list from hex
+                hex_color = item.get("shade_hex", "#000000").lstrip("#")
+                try:
+                    r = int(hex_color[0:2], 16)
+                    g = int(hex_color[2:4], 16)
+                    b = int(hex_color[4:6], 16)
+                    bgr = (b, g, r)
+                except Exception:
+                    bgr = (0, 0, 0)
+                
+                # Extract extra options from metadata
+                meta = item.get("metadata") or {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                
+                look_data = {
+                    "id": item["id"],
+                    "shade": item.get("shade_name", "Unknown"),
+                    "palette": meta.get("palette", "Studio"),
+                    "finish": item.get("finish", "matte"),
+                    "opacity": meta.get("opacity", 1.0),
+                    "skin_tone": meta.get("skin_tone", "Not Detected"),
+                    "undertone": meta.get("undertone", "Not Detected"),
+                    "beauty_score": meta.get("beauty_score", 0),
+                    "harmony": meta.get("harmony", "Unknown"),
+                    "timestamp": item.get("created_at") or meta.get("timestamp") or "",
+                    "bgr": bgr,
+                    "image_path": item.get("image_blob_url", "")
+                }
+                translated_looks.append(look_data)
+            return translated_looks
+        else:
+            return []
     except Exception:
         return []
 
 def save_user_looks(username, looks_list):
-    user_dir = get_user_profile_dir(username)
-    looks_file = os.path.join(user_dir, "looks.json")
-    
-    os.makedirs(user_dir, exist_ok=True)
-    
-    try:
-        analytics = calculate_beauty_analytics(looks_list)
-        data = {
-            "looks": looks_list,
-            "analytics": analytics
-        }
-        with open(looks_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
-        return True
-    except Exception:
+    token = st.session_state.get("session_token")
+    if not token:
         return False
+
+    # Sync deletions: fetch looks from database, and delete any not in looks_list
+    try:
+        db_resp = requests.get(
+            f"{API_BASE_URL}/api/looks",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        if db_resp.status_code == 200:
+            db_looks = db_resp.json().get("looks", [])
+            db_ids = {item["id"] for item in db_looks}
+            current_ids = {look["id"] for look in looks_list if isinstance(look.get("id"), int)}
+            
+            # Delete IDs that exist in the database but are missing from the current list
+            for db_id in db_ids - current_ids:
+                requests.delete(
+                    f"{API_BASE_URL}/api/looks/{db_id}",
+                    headers={"Authorization": f"Bearer {token}"}
+                )
+    except Exception:
+        pass
+
+    # Save new looks
+    import uuid
+    for look in looks_list:
+        look_id = look.get("id")
+        is_new = False
+        if isinstance(look_id, str):
+            try:
+                uuid.UUID(look_id)
+                is_new = True
+            except ValueError:
+                is_new = True
+
+        if is_new:
+            shade_name = look.get("shade", "Unknown")
+            bgr = look.get("bgr", (0, 0, 0))
+            shade_hex = f"#{bgr[2]:02x}{bgr[1]:02x}{bgr[0]:02x}"
+            finish = look.get("finish", "matte")
+            
+            image_url = ""
+            image_path = look.get("image_path", "")
+            
+            blob_token = os.environ.get("BLOB_READ_WRITE_TOKEN")
+            if blob_token and image_path and os.path.exists(image_path):
+                try:
+                    from pathlib import Path
+                    image_url = upload_to_blob(Path(image_path), blob_token)
+                except Exception:
+                    pass
+            
+            if not image_url and image_path and os.path.exists(image_path):
+                try:
+                    import base64
+                    with open(image_path, "rb") as f_img:
+                        img_data = f_img.read()
+                    b64_str = base64.b64encode(img_data).decode("utf-8")
+                    image_url = f"data:image/png;base64,{b64_str}"
+                except Exception:
+                    image_url = "MISSING_IMAGE"
+                    
+            metadata = {
+                "palette": look.get("palette"),
+                "opacity": look.get("opacity"),
+                "skin_tone": look.get("skin_tone"),
+                "undertone": look.get("undertone"),
+                "beauty_score": look.get("beauty_score"),
+                "harmony": look.get("harmony"),
+                "timestamp": look.get("timestamp"),
+            }
+            
+            try:
+                resp = requests.post(
+                    f"{API_BASE_URL}/api/looks",
+                    data={
+                        "shade_name": shade_name,
+                        "shade_hex": shade_hex,
+                        "finish": finish,
+                        "image_url": image_url,
+                        "confidence": look.get("confidence"),
+                        "source_path": look.get("source_path", "studio"),
+                        "metadata_json": json.dumps(metadata)
+                    },
+                    headers={"Authorization": f"Bearer {token}"}
+                )
+                if resp.status_code == 200:
+                    new_db_id = resp.json()["look_id"]
+                    look["id"] = int(new_db_id)
+                else:
+                    return False
+            except Exception:
+                return False
+                
+    return True
+
 
 # =========================
 # PAGE CONFIG
