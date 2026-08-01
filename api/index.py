@@ -404,3 +404,26 @@ async def save_look(
     finally:
         conn.close()
 
+
+@app.delete("/api/looks/{look_id}")
+@app.delete("/looks/{look_id}")
+async def delete_look(
+    look_id: int,
+    current_user_id: str = Depends(get_current_user)
+):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM looks WHERE id = %s AND user_id = %s RETURNING id;",
+                (look_id, current_user_id)
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Look not found or unauthorized.")
+            conn.commit()
+            return {"deleted_id": look_id}
+    finally:
+        conn.close()
+
+
