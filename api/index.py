@@ -371,9 +371,16 @@ async def save_look(
 
 @app.api_route("/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def catch_all(request: Request, path_name: str):
+    serializable_scope = {}
+    for k, v in request.scope.items():
+        if isinstance(v, (str, int, float, bool, list, dict)) or v is None:
+            serializable_scope[k] = v
+        elif isinstance(v, bytes):
+            serializable_scope[k] = v.decode("utf-8", errors="ignore")
+            
     return {
         "received_path": f"/{path_name}",
+        "scope": serializable_scope,
         "headers": dict(request.headers),
         "message": "FastAPI catch-all diagnostic endpoint hit.",
-        "registered_routes": [r.path for r in app.routes if hasattr(r, "path")]
     }
